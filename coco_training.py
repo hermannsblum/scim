@@ -2,6 +2,7 @@ from sacred import Experiment
 import torch
 import tensorflow_datasets as tfds
 import tensorflow as tf
+tf.config.set_visible_devices([], 'GPU')
 import os
 import time
 from shutil import make_archive, copyfile
@@ -51,8 +52,8 @@ def train(_run, batchsize=10, epochs=100, learning_rate=1e-4, device='cuda'):
         return image, label
 
     traindata = TFDataIterableDataset(
-        traindata.take(40).map(data_converter).shuffle(1000))
-    valdata = TFDataIterableDataset(valdata.take(20).map(data_converter))
+        traindata.map(data_converter).cache().prefetch(10000).shuffle(1000))
+    valdata = TFDataIterableDataset(valdata.map(data_converter).cache())
     train_loader = torch.utils.data.DataLoader(dataset=traindata,
                                                batch_size=batchsize,
                                                drop_last=True)
@@ -63,7 +64,7 @@ def train(_run, batchsize=10, epochs=100, learning_rate=1e-4, device='cuda'):
     # MODEL SETUP
     model = FastSCNN(133)
     if torch.cuda.device_count() > 1:
-        model = torch.nn.DataParallel(model, device_ids=[0, 1])
+        model = torch.nn.DataParallel(model, device_ids=[*range(torch.cuda.device_count())])
     model.to(device)
 
     criterion = MixSoftmaxCrossEntropyLoss(ignore_label=255).to(device)
@@ -119,11 +120,11 @@ def train(_run, batchsize=10, epochs=100, learning_rate=1e-4, device='cuda'):
             optimizer.step()
 
             cur_iters += 1
-            if cur_iters % 10 == 0:
+            if cur_iters % 100 == 0:
                 print(
                     'Epoch: [%2d/%2d] Iter [%4d/%4d] || Time: %4.4f sec || lr: %.8f || Loss: %.4f'
                     % (epoch, epochs, i + 1, len(train_loader),
-                       time.time() - start_time, cur_lr, loss.item()))
+                       time.time() - start_time, cur_lr, loss.item()), flush=True)
         _run.log_scalar('loss', loss.item(), epoch)
         _run.log_scalar('learningrate', cur_lr, epoch)
         validation(epoch, best_pred)
