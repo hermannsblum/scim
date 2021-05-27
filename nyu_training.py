@@ -11,12 +11,12 @@ from shutil import make_archive, copyfile
 
 import fastscnn.data.coco_segmentation
 from fastscnn.data.tfds_to_torch import TFDataIterableDataset
+from fastscnn.data.augmentation import augmentation
 from fastscnn.model import FastSCNN
 from fastscnn.gdrive import load_gdrive_file
 from fastscnn.lr_scheduler import LRScheduler
 from fastscnn.segmentation_metrics import SegmentationMetric
 from fastscnn.losses import MixSoftmaxCrossEntropyLoss
-from fastscnn.data.images import augmentation
 from fastscnn.settings import TMPDIR
 from fastscnn.sacred_utils import get_observer
 
@@ -70,8 +70,8 @@ def train(_run,
         image = tf.transpose(image, perm=[2, 0, 1])
         return image, label
 
-    traindata = TFDataIterableDataset(
-        traindata.map(data_converter).cache().prefetch(10000))
+    traindata = TFDataIterableDataset(traindata.cache().prefetch(10000).map(
+        augmentation).map(data_converter))
     valdata = TFDataIterableDataset(valdata.map(data_converter))
     train_loader = torch.utils.data.DataLoader(dataset=traindata,
                                                batch_size=batchsize,
@@ -87,8 +87,14 @@ def train(_run,
     # Load pretrained weights from coco
     checkpoint = torch.load(load_gdrive_file(pretrained_model, ending='pth'))
     # remove output layer since we have a different number of classes
-    checkpoint.pop('module.classifier.conv.1.weight')
-    checkpoint.pop('module.classifier.conv.1.bias')
+    if 'classifier.conv.1.weight' in checkpoint and checkpoint[
+            'classifier.conv.1.weight'].shape[0] != 40:
+        checkpoint.pop('classifier.conv.1.weight')
+        checkpoint.pop('classifier.conv.1.bias')
+    elif 'module.classifier.conv.1.weight' in checkpoint and checkpoint[
+            'module.classifier.conv.1.weight'].shape[0] != 40:
+        checkpoint.pop('module.classifier.conv.1.weight')
+        checkpoint.pop('module.classifier.conv.1.bias')
     load_checkpoint(model, checkpoint, strict=False)
     if torch.cuda.device_count() > 1:
         model = torch.nn.DataParallel(
