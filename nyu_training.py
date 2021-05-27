@@ -50,7 +50,12 @@ def save_checkpoint(model, is_best=False):
 
 
 @ex.main
-def train(_run, batchsize=10, epochs=100, learning_rate=1e-4, device='cuda'):
+def train(_run,
+          batchsize=10,
+          epochs=100,
+          learning_rate=1e-4,
+          device='cuda',
+          pretrained_model='15vSz0eBSjN4K1b3DvKZ1PQTtW4cY-_2W'):
     # DATA LOADING
     data = tfds.load('nyu_depth_v2_labeled/labeled',
                      split='train',
@@ -80,8 +85,7 @@ def train(_run, batchsize=10, epochs=100, learning_rate=1e-4, device='cuda'):
     # MODEL SETUP
     model = FastSCNN(40)
     # Load pretrained weights from coco
-    checkpoint = torch.load(
-        load_gdrive_file('15vSz0eBSjN4K1b3DvKZ1PQTtW4cY-_2W', ending='pth'))
+    checkpoint = torch.load(load_gdrive_file(pretrained_model, ending='pth'))
     # remove output layer since we have a different number of classes
     checkpoint.pop('module.classifier.conv.1.weight')
     checkpoint.pop('module.classifier.conv.1.bias')
