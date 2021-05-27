@@ -63,8 +63,6 @@ def train(_run, batchsize=10, epochs=100, learning_rate=1e-4, device='cuda'):
         label = tf.cast(label, tf.int64)
         # move channel from last to 2nd
         image = tf.transpose(image, perm=[2, 0, 1])
-        # remove last channel of label
-        label = label[..., 0]
         return image, label
 
     traindata = TFDataIterableDataset(

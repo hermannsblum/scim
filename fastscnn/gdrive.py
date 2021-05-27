@@ -1,6 +1,6 @@
 
 import os
-import gdrive
+import gdown
 
 def load_gdrive_file(file_id,
                      ending='',
