@@ -43,132 +43,194 @@ Microsoft Kinect. It includes a labelled subset of frames with semantic and
 instance annotations.
 """
 
+TRAINING_LABEL_MAP = [
+    256,
+    40, 40, 3, 22, 5, 40, 12, 38, 40, 40, 2, 39, 40, 40, 26, 40, 24, 40, 7, 40,
+    1, 40, 40, 34, 38, 29, 40, 8, 40, 40, 40, 40, 38, 40, 40, 14, 40, 38, 40,
+    40, 40, 15, 39, 40, 30, 40, 40, 39, 40, 39, 38, 40, 38, 40, 37, 40, 38, 38,
+    9, 40, 40, 38, 40, 11, 38, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40,
+    40, 38, 13, 40, 40, 6, 40, 23, 40, 39, 10, 16, 40, 40, 40, 40, 38, 40, 40,
+    40, 40, 40, 40, 40, 40, 40, 38, 40, 39, 40, 40, 40, 40, 39, 38, 40, 40, 40,
+    40, 40, 40, 18, 40, 40, 19, 28, 33, 40, 40, 40, 40, 40, 40, 40, 40, 40, 38,
+    27, 36, 40, 40, 40, 40, 21, 40, 20, 35, 40, 40, 40, 40, 40, 40, 40, 40, 38,
+    40, 40, 40, 4, 32, 40, 40, 39, 40, 39, 40, 40, 40, 40, 40, 17, 40, 40, 25,
+    40, 39, 40, 40, 40, 40, 40, 40, 40, 40, 39, 40, 40, 40, 40, 40, 40, 40, 40,
+    40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 39, 40, 40, 40, 40, 40, 40,
+    40, 40, 40, 39, 38, 38, 40, 40, 39, 40, 39, 40, 38, 39, 38, 40, 40, 40, 40,
+    40, 40, 40, 40, 40, 40, 39, 40, 38, 40, 40, 38, 38, 40, 40, 40, 40, 40, 40,
+    40, 40, 40, 40, 40, 40, 40, 38, 40, 40, 40, 40, 40, 39, 40, 40, 40, 40, 40,
+    40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 39, 40, 40, 40, 40, 40, 40, 40, 40,
+    40, 40, 40, 40, 39, 40, 40, 40, 38, 40, 40, 39, 40, 40, 38, 40, 40, 40, 40,
+    40, 40, 40, 40, 40, 40, 40, 39, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40,
+    40, 40, 40, 40, 40, 40, 31, 40, 40, 40, 40, 40, 40, 40, 38, 40, 40, 38, 39,
+    39, 40, 40, 40, 40, 40, 40, 40, 40, 40, 38, 40, 39, 40, 40, 39, 40, 40, 40,
+    38, 40, 40, 40, 40, 40, 40, 40, 40, 38, 39, 40, 40, 40, 40, 40, 40, 38, 40,
+    40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 38, 39, 40, 40, 40, 40, 40, 40, 40,
+    39, 40, 40, 40, 40, 40, 40, 38, 40, 40, 40, 38, 40, 39, 40, 40, 40, 39, 39,
+    40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 39, 40, 40, 40, 40, 40, 40, 40, 40,
+    40, 40, 40, 40, 39, 39, 40, 40, 39, 39, 40, 40, 40, 40, 38, 40, 40, 38, 39,
+    39, 40, 39, 40, 39, 38, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 39, 40,
+    38, 40, 39, 40, 40, 40, 40, 40, 39, 39, 40, 40, 40, 40, 40, 40, 39, 39, 40,
+    40, 38, 39, 39, 40, 40, 40, 40, 40, 40, 40, 40, 40, 39, 39, 40, 40, 40, 40,
+    39, 40, 40, 40, 40, 40, 39, 40, 40, 39, 40, 40, 40, 40, 40, 40, 40, 40, 40,
+    40, 40, 40, 40, 40, 40, 39, 38, 40, 40, 40, 40, 40, 40, 40, 39, 38, 39, 40,
+    38, 39, 40, 39, 40, 39, 40, 40, 40, 40, 40, 40, 40, 40, 38, 40, 40, 40, 40,
+    40, 38, 40, 40, 39, 40, 40, 40, 39, 40, 38, 40, 40, 40, 40, 40, 40, 40, 40,
+    38, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 39, 38,
+    40, 40, 38, 40, 40, 38, 40, 40, 40, 40, 40, 40, 40, 40, 40, 39, 40, 40, 40,
+    40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 38, 40, 40, 38, 40, 40,
+    40, 40, 40, 40, 40, 40, 40, 40, 40, 38, 38, 38, 40, 40, 40, 38, 40, 40, 40,
+    38, 38, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40,
+    38, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 38, 40, 38, 39, 40,
+    40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40,
+    40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 39, 40, 40, 40, 40, 40, 40, 40, 40,
+    40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40,
+    40, 40, 40, 40, 40, 40, 40, 40, 39, 40, 39, 40, 40, 40, 40, 38, 38, 40, 40,
+    40, 38, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 39, 40, 40,
+    39, 40, 40, 39, 39, 40, 40, 40, 40, 40, 40, 40, 40, 39, 39, 39, 40, 40, 40,
+    40, 39, 40, 40, 40, 40, 40, 40, 40, 40, 39, 40, 40, 40, 40, 40, 39, 40, 40,
+    40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 38, 40, 40, 40, 40, 40, 40,
+    40, 39, 40, 40, 38, 40, 39, 40, 40, 40, 40, 38, 40, 40, 40, 40, 40, 38, 40,
+    40, 40, 40, 40, 40, 40, 39, 40, 40, 40, 40, 40, 40, 40, 40, 40, 39, 40, 40
+]
+
+# according to https://github.com/ankurhanda/SceneNetv1.0/
+TRAINING_LABEL_NAMES = [
+    'wall', 'floor', 'cabinet', 'bed', 'chair', 'sofa', 'table', 'door', 'window',
+    'bookshelf', 'picture', 'counter', 'blinds', 'desk', 'shelves', 'curtain', 'dresser',
+    'pilow', 'mirror', 'floor mat', 'clothes', 'ceiling', 'books', 'refridgerator',
+    'television', 'paper', 'towel', 'shower-curtain', 'box', 'whiteboard', 'person',
+    'night stand', 'toilet', 'sink', 'lamp', 'bathtub', 'bag', 'otherstructure',
+    'otherfurniture', 'otherprop'
+]
+
 
 class NyuDepthV2Config(tfds.core.BuilderConfig):
 
-  def __init__(self, labeled=False, **kwargs):
-    super().__init__(version='1.0.0', **kwargs)
-    self.labeled = labeled
+    def __init__(self, labeled=False, **kwargs):
+        super().__init__(version='1.0.0', **kwargs)
+        self.labeled = labeled
 
 
 class NyuDepthV2Labeled(tfds.core.GeneratorBasedBuilder):
-  """NYU Depth V2 Dataset."""
+    """NYU Depth V2 Dataset."""
 
-  VERSION = tfds.core.Version('1.0.0')
+    VERSION = tfds.core.Version('1.1.0')
 
-  BUILDER_CONFIGS = [
-      NyuDepthV2Config(
-          name='labeled',
-          description=
-          'Subset of frames labelled for semantic and instance segmentation.',
-          labeled=True,
-      ),
-      NyuDepthV2Config(
-          name='depth',
-          description='Full dataset with rgb and depth images.',
-          labeled=False,
-      ),
-  ]
-
-  def _info(self):
-    features = {
-        'image': tfds.features.Image(shape=(480, 640, 3)),
-        'depth': tfds.features.Tensor(shape=(480, 640), dtype=tf.float16),
-    }
-    if self.builder_config.labeled:
-      features.update(
-          {
-              'depth':
-                  tfds.features.Tensor(shape=(480, 640), dtype=tf.float32),
-              'accelData':
-                  tfds.features.Tensor(shape=(4,), dtype=tf.float32),
-              'instances':
-                  tfds.features.Tensor(shape=(480, 640), dtype=tf.uint8),
-              'labels':
-                  tfds.features.Tensor(shape=(480, 640), dtype=tf.uint16),
-              'scene':
-                  tf.string,
-              'sceneType':
-                  tf.string,
-          }
-      )
-    return tfds.core.DatasetInfo(
-        builder=self,
-        description=_DESCRIPTION,
-        features=tfds.features.FeaturesDict(features),
-        supervised_keys=(
-            'image', 'labels' if self.builder_config.labeled else 'depth'
+    BUILDER_CONFIGS = [
+        NyuDepthV2Config(
+            name='labeled',
+            description=
+            'Subset of frames labelled for semantic and instance segmentation.',
+            labeled=True,
         ),
-        homepage='https://cs.nyu.edu/~silberman/datasets/nyu_depth_v2.html',
-        citation=_CITATION,
-    )
-
-  def _split_generators(self, dl_manager):
-    """Returns SplitGenerators."""
-
-    urls = {
-        'fastdepth':
-            'http://datasets.lids.mit.edu/fastdepth/data/nyudepthv2.tar.gz',
-        'labeled':
-            'http://horatio.cs.nyu.edu/mit/silberman/nyu_depth_v2/nyu_depth_v2_labeled.mat',
-    }
-
-    if self.builder_config.labeled:
-      extracted = dl_manager.download_and_extract(urls['labeled'])
-      return [
-          tfds.core.SplitGenerator(
-              name=tfds.Split.TRAIN, gen_kwargs={
-                  'data_path': extracted,
-              }
-          )
-      ]
-    extracted = dl_manager.download_and_extract(urls['fastdepth'])
-    return [
-        tfds.core.SplitGenerator(
-            name=tfds.Split.TRAIN,
-            gen_kwargs={
-                'data_path': os.path.join(extracted, 'nyudepthv2', 'train')
-            },
-        ),
-        tfds.core.SplitGenerator(
-            name=tfds.Split.VALIDATION,
-            gen_kwargs={
-                'data_path': os.path.join(extracted, 'nyudepthv2', 'val')
-            },
+        NyuDepthV2Config(
+            name='depth',
+            description='Full dataset with rgb and depth images.',
+            labeled=False,
         ),
     ]
 
-  def _generate_examples(self, data_path):
-    """Yields examples."""
-    h5py = tfds.core.lazy_imports.h5py
-    if self.builder_config.labeled:
-      with h5py.File(data_path, 'r') as f:
-        for i in range(f['accelData'].shape[1]):
-          yield i, {
-              'accelData':
-                  f['accelData'][:, i].astype('float32'),
-              'depth':
-                  np.transpose(f['depths'][i]).astype('float32'),
-              'image':
-                  np.transpose(f['images'][i]).astype('uint8'),
-              'instances':
-                  np.transpose(f['instances'][i]).astype('uint8'),
-              'labels':
-                  np.transpose(f['labels'][i]).astype('uint16'),
-              'scene':
-                  f[f['scenes'][0, i]][:, 0].tobytes().decode('ascii'),
-              'sceneType':
-                  f[f['sceneTypes'][0, i]][:, 0].tobytes().decode('ascii'),
-          }
-    else:
-      for directory in tf.io.gfile.listdir(data_path):
-        for file_name in tf.io.gfile.listdir(
-            os.path.join(data_path, directory)
-        ):
-          with h5py.File(
-              os.path.join(data_path, directory, file_name), 'r'
-          ) as f:
-            yield directory + '_' + file_name, {
-                'image': np.transpose(f['rgb'], (1, 2, 0)),
-                'depth': f['depth'][:].astype('float16')
-            }
+    def _info(self):
+        features = {
+            'image': tfds.features.Image(shape=(480, 640, 3)),
+            'depth': tfds.features.Tensor(shape=(480, 640), dtype=tf.float16),
+        }
+        if self.builder_config.labeled:
+            features.update(
+                {
+                    'depth':
+                        tfds.features.Tensor(shape=(480, 640), dtype=tf.float32),
+                    'accelData':
+                        tfds.features.Tensor(shape=(4,), dtype=tf.float32),
+                    'instances':
+                        tfds.features.Tensor(shape=(480, 640), dtype=tf.uint8),
+                    'labels':
+                        tfds.features.Tensor(shape=(480, 640), dtype=tf.uint8),
+                    'scene':
+                        tf.string,
+                    'sceneType':
+                        tf.string,
+                }
+            )
+        return tfds.core.DatasetInfo(
+            builder=self,
+            description=_DESCRIPTION,
+            features=tfds.features.FeaturesDict(features),
+            supervised_keys=(
+                'image', 'labels' if self.builder_config.labeled else 'depth'
+            ),
+            homepage='https://cs.nyu.edu/~silberman/datasets/nyu_depth_v2.html',
+            citation=_CITATION,
+        )
+
+    def _split_generators(self, dl_manager):
+        """Returns SplitGenerators."""
+
+        urls = {
+            'fastdepth':
+                'http://datasets.lids.mit.edu/fastdepth/data/nyudepthv2.tar.gz',
+            'labeled':
+                'http://horatio.cs.nyu.edu/mit/silberman/nyu_depth_v2/nyu_depth_v2_labeled.mat',
+        }
+
+        if self.builder_config.labeled:
+            extracted = dl_manager.download_and_extract(urls['labeled'])
+            return [
+                tfds.core.SplitGenerator(
+                    name=tfds.Split.TRAIN, gen_kwargs={
+                        'data_path': extracted,
+                    }
+                )
+            ]
+        extracted = dl_manager.download_and_extract(urls['fastdepth'])
+        return [
+            tfds.core.SplitGenerator(
+                name=tfds.Split.TRAIN,
+                gen_kwargs={
+                    'data_path': os.path.join(extracted, 'nyudepthv2', 'train')
+                },
+            ),
+            tfds.core.SplitGenerator(
+                name=tfds.Split.VALIDATION,
+                gen_kwargs={
+                    'data_path': os.path.join(extracted, 'nyudepthv2', 'val')
+                },
+            ),
+        ]
+
+    def _generate_examples(self, data_path):
+        """Yields examples."""
+        h5py = tfds.core.lazy_imports.h5py
+        label_map = np.array(TRAINING_LABEL_MAP) - 1
+        if self.builder_config.labeled:
+            with h5py.File(data_path, 'r') as f:
+                for i in range(f['accelData'].shape[1]):
+                    yield i, {
+                        'accelData':
+                            f['accelData'][:, i].astype('float32'),
+                        'depth':
+                            np.transpose(f['depths'][i]).astype('float32'),
+                        'image':
+                            np.transpose(f['images'][i]).astype('uint8'),
+                        'instances':
+                            np.transpose(f['instances'][i]).astype('uint8'),
+                        'labels':
+                            label_map[np.transpose(f['labels'][i]).astype('uint16')].astype('uint8'),
+                        'scene':
+                            f[f['scenes'][0, i]][:, 0].tobytes().decode('ascii'),
+                        'sceneType':
+                            f[f['sceneTypes'][0, i]][:, 0].tobytes().decode('ascii'),
+                    }
+        else:
+            for directory in tf.io.gfile.listdir(data_path):
+                for file_name in tf.io.gfile.listdir(
+                    os.path.join(data_path, directory)
+                ):
+                    with h5py.File(
+                        os.path.join(data_path, directory, file_name), 'r'
+                    ) as f:
+                        yield directory + '_' + file_name, {
+                            'image': np.transpose(f['rgb'], (1, 2, 0)),
+                            'depth': f['depth'][:].astype('float16')
+                        }
