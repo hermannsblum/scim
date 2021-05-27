@@ -66,7 +66,7 @@ def train(_run, batchsize=10, epochs=100, learning_rate=1e-4, device='cuda'):
         return image, label
 
     traindata = TFDataIterableDataset(
-        traindata.map(data_converter).prefetch(10000))
+        traindata.map(data_converter).cache().prefetch(10000))
     valdata = TFDataIterableDataset(valdata.map(data_converter))
     train_loader = torch.utils.data.DataLoader(dataset=traindata,
                                                batch_size=batchsize,
