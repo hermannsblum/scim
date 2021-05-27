@@ -15,10 +15,11 @@ class TFDSIterableDataset(torch.utils.data.IterableDataset):
 class TFDataIterableDataset(torch.utils.data.IterableDataset):
   def __init__(self, ds):
     super().__init__()
-    self.tf_dataset = ds
+    self.tf_dataset = tfds.as_numpy(ds)
 
   def __iter__(self):
-    return iter(tfds.as_numpy(self.tf_dataset))
+      for batch in self.tf_dataset:
+          yield torch.from_numpy(batch[0]), torch.from_numpy(batch[1])
 
   def __len__(self):
     return len(self.tf_dataset)

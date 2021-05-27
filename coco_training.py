@@ -52,13 +52,15 @@ def train(_run, batchsize=10, epochs=100, learning_rate=1e-4, device='cuda'):
         return image, label
 
     traindata = TFDataIterableDataset(
-        traindata.map(data_converter).cache().prefetch(10000).shuffle(1000))
-    valdata = TFDataIterableDataset(valdata.map(data_converter).cache())
+         traindata.map(data_converter).prefetch(10000))
+    valdata = TFDataIterableDataset(valdata.map(data_converter))
     train_loader = torch.utils.data.DataLoader(dataset=traindata,
                                                batch_size=batchsize,
+                                               pin_memory=True,
                                                drop_last=True)
     val_loader = torch.utils.data.DataLoader(dataset=valdata,
                                              batch_size=batchsize,
+                                             pin_memory=True,
                                              drop_last=True)
 
     # MODEL SETUP
@@ -134,8 +136,7 @@ def train(_run, batchsize=10, epochs=100, learning_rate=1e-4, device='cuda'):
     # upload checkpoints
     for filename in ('fastscnn_coco.pth', 'fastscnn_coco_best.pth'):
         modelpath = os.path.join(TMPDIR, filename)
-        make_archive(modelpath, 'zip', modelpath)
-        _run.add_artifact(modelpath + '.zip')
+        _run.add_artifact(modelpath)
     return best_pred
 
 
