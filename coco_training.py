@@ -43,7 +43,7 @@ def train(_run, batchsize=10, epochs=100, learning_rate=1e-4, device='cuda'):
                         as_supervised=True)
 
     def data_converter(image, label):
-        image = tf.cast(image, tf.float32)
+        image = tf.image.convert_image_dtype(image, tf.float32)
         label = tf.cast(label, tf.int64)
         # move channel from last to 2nd
         image = tf.transpose(image, perm=[2, 0, 1])
