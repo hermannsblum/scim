@@ -94,7 +94,8 @@ def train(_run, batchsize=10, epochs=100, learning_rate=1e-4, device='cuda'):
         _run.log_scalar('val_miou', mIoU, epoch)
         _run.log_scalar('val_acc', pixAcc, epoch)
 
-        new_pred = (pixAcc + mIoU) / 2
+        #new_pred = (pixAcc + mIoU) / 2
+        new_pred = mIoU
         if new_pred > best_pred:
             is_best = True
             best_pred = new_pred
@@ -137,6 +138,7 @@ def train(_run, batchsize=10, epochs=100, learning_rate=1e-4, device='cuda'):
     for filename in ('fastscnn_coco.pth', 'fastscnn_coco_best.pth'):
         modelpath = os.path.join(TMPDIR, filename)
         _run.add_artifact(modelpath)
+    _run.result = best_pred
     return best_pred
 
 
