@@ -64,7 +64,7 @@ def train(_run,
     traindata = data.skip(200)
 
     def data_converter(image, label):
-        image = tf.cast(image, tf.float32)
+        image = tf.image.convert_image_dtype(image, tf.float32)
         label = tf.cast(label, tf.int64)
         # move channel from last to 2nd
         image = tf.transpose(image, perm=[2, 0, 1])
