@@ -40,7 +40,7 @@ def load_checkpoint(model, state_dict, strict=True):
 
 def save_checkpoint(model, is_best=False):
     """Save Checkpoint"""
-    filename = 'fastscnn_coco.pth'
+    filename = 'fastscnn_nyu.pth'
     save_path = os.path.join(TMPDIR, filename)
     torch.save(model.state_dict(), save_path)
     if is_best:
