@@ -13,7 +13,6 @@ from fastscnn.model import FastSCNN
 from fastscnn.lr_scheduler import LRScheduler
 from fastscnn.segmentation_metrics import SegmentationMetric
 from fastscnn.losses import MixSoftmaxCrossEntropyLoss
-from fastscnn.data.images import augmentation
 from fastscnn.settings import TMPDIR
 from fastscnn.sacred_utils import get_observer
 
