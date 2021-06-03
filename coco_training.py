@@ -20,13 +20,13 @@ ex = Experiment()
 ex.observers.append(get_observer())
 
 
-def save_checkpoint(model, is_best=False):
+def save_checkpoint(model, postfix=None):
     """Save Checkpoint"""
-    filename = 'fastscnn_coco.pth'
+    filename = 'fastscnn_nyu.pth'
     save_path = os.path.join(TMPDIR, filename)
     torch.save(model.state_dict(), save_path)
-    if is_best:
-        best_filename = 'fastscnn_coco_best.pth'
+    if postfix is not None:
+        best_filename = 'fastscnn_nyu_{}.pth'.format(postfix)
         best_filename = os.path.join(TMPDIR, best_filename)
         copyfile(save_path, best_filename)
 
@@ -98,7 +98,7 @@ def train(_run, batchsize=10, epochs=100, learning_rate=1e-4, device='cuda'):
         if new_pred > best_pred:
             is_best = True
             best_pred = new_pred
-        save_checkpoint(model, is_best)
+        save_checkpoint(model, postfix='best' if is_best else None)
 
     best_pred = .0
     cur_iters = 0
@@ -130,8 +130,11 @@ def train(_run, batchsize=10, epochs=100, learning_rate=1e-4, device='cuda'):
         _run.log_scalar('loss', loss.item(), epoch)
         _run.log_scalar('learningrate', cur_lr, epoch)
         validation(epoch, best_pred)
+        if epoch % 5 == 0:
+            save_checkpoint(model, postfix='{}epochs'.format(epoch))
+            _run.add_artifact(os.path.join(TMPDIR, 'fastscnn_nyu_{}epochs.pth'.format(epoch)))
 
-    save_checkpoint(model, is_best=False)
+    save_checkpoint(model)
 
     # upload checkpoints
     for filename in ('fastscnn_coco.pth', 'fastscnn_coco_best.pth'):
