@@ -38,13 +38,13 @@ def load_checkpoint(model, state_dict, strict=True):
     model.load_state_dict(state_dict, strict=strict)
 
 
-def save_checkpoint(model, is_best=False):
+def save_checkpoint(model, postfix=None):
   """Save Checkpoint"""
   filename = 'fastscnn_nyu.pth'
   save_path = os.path.join(TMPDIR, filename)
   torch.save(model.state_dict(), save_path)
-  if is_best:
-    best_filename = 'fastscnn_nyu_best.pth'
+  if postfix is not None:
+    best_filename = 'fastscnn_nyu_{}.pth'.format(postfix)
     best_filename = os.path.join(TMPDIR, best_filename)
     copyfile(save_path, best_filename)
 
@@ -88,11 +88,11 @@ def train(_run,
   checkpoint = torch.load(load_gdrive_file(pretrained_model, ending='pth'))
   # remove output layer since we have a different number of classes
   if 'classifier.conv.1.weight' in checkpoint and checkpoint[
-      'classifier.conv.1.weight'].shape[0] != 40:
+          'classifier.conv.1.weight'].shape[0] != 40:
     checkpoint.pop('classifier.conv.1.weight')
     checkpoint.pop('classifier.conv.1.bias')
   elif 'module.classifier.conv.1.weight' in checkpoint and checkpoint[
-      'module.classifier.conv.1.weight'].shape[0] != 40:
+          'module.classifier.conv.1.weight'].shape[0] != 40:
     checkpoint.pop('module.classifier.conv.1.weight')
     checkpoint.pop('module.classifier.conv.1.bias')
   load_checkpoint(model, checkpoint, strict=False)
@@ -104,10 +104,10 @@ def train(_run,
   criterion = MixSoftmaxCrossEntropyLoss(ignore_label=255).to(device)
   optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
   lr_scheduler = LRScheduler(mode='poly',
-                             base_lr=learning_rate,
-                             nepochs=epochs,
-                             iters_per_epoch=len(train_loader),
-                             power=.9)
+                              base_lr=learning_rate,
+                              nepochs=epochs,
+                              iters_per_epoch=len(train_loader),
+                              power=.9)
   metric = SegmentationMetric(40)
 
   def validation(epoch, best_pred):
@@ -130,7 +130,7 @@ def train(_run,
     if new_pred > best_pred:
       is_best = True
       best_pred = new_pred
-    save_checkpoint(model, is_best)
+    save_checkpoint(model, postfix='best' if is_best else None)
 
   best_pred = .0
   cur_iters = 0
@@ -158,13 +158,16 @@ def train(_run,
         print(
             'Epoch: [%2d/%2d] Iter [%4d/%4d] || Time: %4.4f sec || lr: %.8f || Loss: %.4f'
             % (epoch, epochs, i + 1, len(train_loader),
-               time.time() - start_time, cur_lr, loss.item()),
+                time.time() - start_time, cur_lr, loss.item()),
             flush=True)
     _run.log_scalar('loss', loss.item(), epoch)
     _run.log_scalar('learningrate', cur_lr, epoch)
     validation(epoch, best_pred)
+    if epoch % 5 == 0:
+      save_checkpoint(model, postfix='{}epochs'.format(epoch))
+      _run.add_artifact(os.path.join(TMPDIR, 'fastscnn_nyu_{}epochs.pth'.format(epoch)))
 
-  save_checkpoint(model, is_best=False)
+  save_checkpoint(model)
 
   # upload checkpoints
   for filename in ('fastscnn_nyu.pth', 'fastscnn_nyu_best.pth'):
