@@ -74,7 +74,8 @@ def train(_run,
   model.to(device)
 
   if auxloss:
-    criterion = MixSoftmaxCrossEntropyOHEMLoss(ignore_index=255,
+    criterion = MixSoftmaxCrossEntropyOHEMLoss(aux=True,
+                                               ignore_index=255,
                                                use_weight=False).to(device)
   else:
     criterion = MixSoftmaxCrossEntropyLoss(ignore_label=255).to(device)
