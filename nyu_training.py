@@ -16,7 +16,7 @@ from fastscnn.model import FastSCNN
 from fastscnn.gdrive import load_gdrive_file
 from fastscnn.lr_scheduler import LRScheduler
 from fastscnn.segmentation_metrics import SegmentationMetric
-from fastscnn.losses import MixSoftmaxCrossEntropyLoss
+from fastscnn.losses import MixSoftmaxCrossEntropyLoss, MixSoftmaxCrossEntropyOHEMLoss
 from fastscnn.settings import TMPDIR
 from fastscnn.sacred_utils import get_observer
 
@@ -89,11 +89,11 @@ def train(_run,
   checkpoint = torch.load(load_gdrive_file(pretrained_model, ending='pth'))
   # remove output layer since we have a different number of classes
   if 'classifier.conv.1.weight' in checkpoint and checkpoint[
-          'classifier.conv.1.weight'].shape[0] != 40:
+      'classifier.conv.1.weight'].shape[0] != 40:
     checkpoint.pop('classifier.conv.1.weight')
     checkpoint.pop('classifier.conv.1.bias')
   elif 'module.classifier.conv.1.weight' in checkpoint and checkpoint[
-          'module.classifier.conv.1.weight'].shape[0] != 40:
+      'module.classifier.conv.1.weight'].shape[0] != 40:
     checkpoint.pop('module.classifier.conv.1.weight')
     checkpoint.pop('module.classifier.conv.1.bias')
   load_checkpoint(model, checkpoint, strict=False)
@@ -110,10 +110,10 @@ def train(_run,
     criterion = MixSoftmaxCrossEntropyLoss(ignore_label=255).to(device)
   optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
   lr_scheduler = LRScheduler(mode='poly',
-                              base_lr=learning_rate,
-                              nepochs=epochs,
-                              iters_per_epoch=len(train_loader),
-                              power=.9)
+                             base_lr=learning_rate,
+                             nepochs=epochs,
+                             iters_per_epoch=len(train_loader),
+                             power=.9)
   metric = SegmentationMetric(40)
 
   def validation(epoch, best_pred):
@@ -164,7 +164,7 @@ def train(_run,
         print(
             'Epoch: [%2d/%2d] Iter [%4d/%4d] || Time: %4.4f sec || lr: %.8f || Loss: %.4f'
             % (epoch, epochs, i + 1, len(train_loader),
-                time.time() - start_time, cur_lr, loss.item()),
+               time.time() - start_time, cur_lr, loss.item()),
             flush=True)
     _run.log_scalar('loss', loss.item(), epoch)
     _run.log_scalar('learningrate', cur_lr, epoch)
