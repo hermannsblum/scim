@@ -43,7 +43,7 @@ def load_checkpoint(model, state_dict, strict=True):
 def train(_run,
           n_components=3,
           covariance_type='tied',
-          batchsiz=8,
+          batchsize=8,
           reg_covar=1e-6,
           device='cuda',
           pretrained_model='15vSz0eBSjN4K1b3DvKZ1PQTtW4cY-_2W'):
