@@ -52,6 +52,7 @@ def save_checkpoint(model, postfix=None):
 @ex.main
 def train(_run,
           batchsize=10,
+          auxloss=False,
           epochs=100,
           learning_rate=1e-4,
           device='cuda',
@@ -83,7 +84,7 @@ def train(_run,
                                            drop_last=True)
 
   # MODEL SETUP
-  model = FastSCNN(40)
+  model = FastSCNN(40, aux=auxloss)
   # Load pretrained weights from coco
   checkpoint = torch.load(load_gdrive_file(pretrained_model, ending='pth'))
   # remove output layer since we have a different number of classes
@@ -101,7 +102,12 @@ def train(_run,
         model, device_ids=[*range(torch.cuda.device_count())])
   model.to(device)
 
-  criterion = MixSoftmaxCrossEntropyLoss(ignore_label=255).to(device)
+  if auxloss:
+    criterion = MixSoftmaxCrossEntropyOHEMLoss(aux=True,
+                                               ignore_index=255,
+                                               use_weight=False).to(device)
+  else:
+    criterion = MixSoftmaxCrossEntropyLoss(ignore_label=255).to(device)
   optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
   lr_scheduler = LRScheduler(mode='poly',
                               base_lr=learning_rate,
@@ -163,9 +169,6 @@ def train(_run,
     _run.log_scalar('loss', loss.item(), epoch)
     _run.log_scalar('learningrate', cur_lr, epoch)
     validation(epoch, best_pred)
-    if epoch % 5 == 0:
-      save_checkpoint(model, postfix='{}epochs'.format(epoch))
-      _run.add_artifact(os.path.join(TMPDIR, 'fastscnn_nyu_{}epochs.pth'.format(epoch)))
 
   save_checkpoint(model)
 
