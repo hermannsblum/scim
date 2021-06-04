@@ -2,6 +2,7 @@ from sacred import Experiment
 import torch
 import tensorflow_datasets as tfds
 import tensorflow as tf
+import sklearn
 
 tf.config.set_visible_devices([], 'GPU')
 import os
