@@ -86,7 +86,7 @@ def train(_run,
   for i, (images, _) in enumerate(train_loader):
     images = images.to(device)
 
-    _, features = model(images)
+    features = model(images)[-1]
     features = features.to('cpu').detach().numpy()
     # reshaping
     features = features.transpose([0, 2, 3, 1]).reshape([-1, 128])
