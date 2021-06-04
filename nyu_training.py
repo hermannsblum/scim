@@ -169,6 +169,10 @@ def train(_run,
     _run.log_scalar('loss', loss.item(), epoch)
     _run.log_scalar('learningrate', cur_lr, epoch)
     validation(epoch, best_pred)
+    if epoch % 5 == 0:
+      save_checkpoint(model, postfix='{}epochs'.format(epoch))
+      _run.add_artifact(
+          os.path.join(TMPDIR, 'fastscnn_nyu_{}epochs.pth'.format(epoch)))
 
   save_checkpoint(model)
 
