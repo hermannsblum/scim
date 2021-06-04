@@ -139,3 +139,7 @@ def train(_run,
   save_path = os.path.join(TMPDIR, filename)
   torch.save(model.state_dict(), save_path)
   _run.add_artifact(save_path)
+
+
+if __name__ == '__main__':
+  ex.run_commandline()
