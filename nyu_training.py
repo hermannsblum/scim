@@ -153,7 +153,7 @@ def train(_run,
       targets = targets.to(device)
 
       outputs = model(images)
-      loss = criterion(outputs, targets)
+      loss = criterion(outputs[:-1], targets)
 
       optimizer.zero_grad()
       loss.backward()
