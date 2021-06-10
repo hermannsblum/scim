@@ -65,7 +65,7 @@ class FastSCNNDensity(nn.Module):
         64, [64, 96, 128], 128, 6, [3, 3, 3])
     self.feature_fusion = FeatureFusionModule(64, 128, 128)
     self.classifier = Classifer(128, num_classes)
-    self.gmm = _GMM(128,
+    self.gmm = _TorchGMM(128,
                     n_components=n_components,
                     weights=weights,
                     means=means,
@@ -91,10 +91,29 @@ class FastSCNNDensity(nn.Module):
       auxout = self.auxlayer(higher_res_features)
       auxout = F.interpolate(auxout, size, mode='bilinear', align_corners=True)
       outputs.append(auxout)
-    nll = -self.gmm.loglikelihood(feat.permute([0, 2, 3, 1]))
+    nll = -self.gmm(feat.permute([0, 2, 3, 1]))
     nll = F.interpolate(nll, size, mode='bilinear', align_corners=True)
     outputs.append(nll)
     return tuple(outputs)
+
+
+class _TorchGMM(nn.Module):
+
+  def __init__(self, n_features, n_components, means=None, covariances=None, weights=None):
+    super().__init__()
+    if weights is None:
+      weights = torch.rand((n_components,))
+    if covariances is None:
+      covariances = torch.rand((n_components, n_features, n_features))
+    if means is None:
+      means = torch.rand((n_components, n_features))
+    mix = torch.distributions.Categorical(weights)
+    comp  = torch.distributions.Independent(
+        torch.distributions.MultivariateNormal(means, covariances), 1)
+    self.gmm = torch.distributions.MixtureSameFamily(mix, comp)
+
+  def forward(self, x):
+    return self.gmm.log_prob(x)
 
 
 class _GMM(nn.Module):

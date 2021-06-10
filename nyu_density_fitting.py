@@ -132,14 +132,29 @@ def train(_run,
       'weights': gmm.weights_,
       'covariances': gmm.covariances_,
   }
+
+  # reshape covariance matrix
+  cov = gmm.covariances_
+  if covariance_type == 'tied':
+    # covariance for each component is the same
+    cov = np.tile(np.expand_dims(cov, 0), (n_components, 1, 1))
+  elif covariance_type == 'diag':
+    # transform from diagonal vector to matrix
+    newcov = np.zeros((n_components, cov.shape[-1], cov.shape[-1]))
+    for i in range(n_components):
+      # np.diag only works on 1-dimensional arrays
+      newcov[i] = np.diag(cov[i])
+    cov = newcov
+  cov = torch.as_tensor(cov)
+
   densitymodel = FastSCNNDensity(40,
                                  n_components=n_components,
-                                 means=gmm.means_,
-                                 covariances=gmm.covariances_,
-                                 weights=gmm.weights_)
+                                 means=torch.as_tensor(gmm.means_),
+                                 covariances=cov,
+                                 weights=torch.as_tensor(gmm.weights_))
   filename = 'fastscnn_nyu_density.pth'
   save_path = os.path.join(TMPDIR, filename)
-  torch.save(model.state_dict(), save_path)
+  torch.save(densitymodel.state_dict(), save_path)
   _run.add_artifact(save_path)
 
 
