@@ -108,8 +108,7 @@ class _TorchGMM(nn.Module):
     if means is None:
       means = torch.rand((n_components, n_features))
     mix = torch.distributions.Categorical(weights)
-    comp  = torch.distributions.Independent(
-        torch.distributions.MultivariateNormal(means, covariances), 1)
+    comp  = torch.distributions.MultivariateNormal(means, covariances)
     self.gmm = torch.distributions.MixtureSameFamily(mix, comp)
 
   def forward(self, x):

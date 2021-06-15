@@ -78,7 +78,7 @@ def train(_run,
   model = FastSCNN(40)
   # Load pretrained weights from coco
   checkpoint = torch.load(load_gdrive_file(pretrained_model, ending='pth'))
-  load_checkpoint(model, checkpoint, strict=True)
+  load_checkpoint(model, checkpoint, strict=False)
   model.to(device)
 
   start_time = time.time()
