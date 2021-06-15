@@ -14,7 +14,7 @@ def augmentation(image, label):
     image = tf.image.flip_left_right(image)
     label = tf.image.flip_left_right(label)
   # brightness
-  image = tf.image.random_brightness(image, max_delta=0.2)
+  image = tf.image.random_brightness(image, max_delta=60)
   # hue
   image = tf.image.random_hue(image, max_delta=.1)
   # undo label dimensions

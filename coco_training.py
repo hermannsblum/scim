@@ -10,6 +10,7 @@ from shutil import make_archive, copyfile
 
 import fastscnn.data.coco_segmentation
 from fastscnn.data.tfds_to_torch import TFDataIterableDataset
+from fastscnn.data.augmentation import augmentation
 from fastscnn.model import FastSCNN
 from fastscnn.lr_scheduler import LRScheduler
 from fastscnn.segmentation_metrics import SegmentationMetric
@@ -46,7 +47,8 @@ def train(_run,
                       as_supervised=True)
 
   def data_converter(image, label):
-    image = tf.image.convert_image_dtype(image, tf.float32)
+    # images are in scale 0-255
+    image = tf.cast(image, tf.float32) / 255
     label = tf.cast(label, tf.int64)
     # move channel from last to 2nd
     image = tf.transpose(image, perm=[2, 0, 1])
@@ -55,7 +57,7 @@ def train(_run,
     return image, label
 
   traindata = TFDataIterableDataset(
-      traindata.map(data_converter).prefetch(10000))
+      traindata.map(augmentation).map(data_converter).prefetch(10000))
   valdata = TFDataIterableDataset(valdata.map(data_converter))
   train_loader = torch.utils.data.DataLoader(dataset=traindata,
                                              batch_size=batchsize,
