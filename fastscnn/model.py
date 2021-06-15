@@ -137,10 +137,12 @@ class _GMM(nn.Module):
 
   def _init_params(self):
     if self.n_components_init is not None:
-      self.n_components = torch.nn.Parameter(self.n_components_init,
+      self.n_components = torch.nn.Parameter(torch.tensor(
+          self.n_components_init),
                                              requires_grad=False)
     else:
-      self.n_components = torch.nn.Paramerter(0, requires_grad=False)
+      self.n_components = torch.nn.Paramerter(torch.tensor(0),
+                                              requires_grad=False)
     if self.means_init is not None:
       assert self.means_init.size() == (
           1, self.n_components, self.n_features
@@ -155,8 +157,8 @@ class _GMM(nn.Module):
     if self.weights_init is not None:
       assert self.weights_init.size() == (
           1, self.n_components, 1
-      ), "Input weights do not have required tensor dimensions (1, %i, %i)" % (
-          self.n_components, self.n_features)
+      ), "Input weights do not have required tensor dimensions (1, %i, 1)" % (
+          self.n_components)
       # (1, k, d)
       self.weights_ = torch.nn.Parameter(self.weights_init, requires_grad=False)
     else:

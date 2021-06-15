@@ -2,18 +2,19 @@ from sacred import Experiment
 import torch
 import tensorflow_datasets as tfds
 import tensorflow as tf
-import sklearn
+import numpy as np
 
 tf.config.set_visible_devices([], 'GPU')
 import os
 import time
 from collections import OrderedDict
 from shutil import make_archive, copyfile
+from sklearn.mixture import GaussianMixture
 
 import fastscnn.data.coco_segmentation
 from fastscnn.data.tfds_to_torch import TFDataIterableDataset
 from fastscnn.data.augmentation import augmentation
-from fastscnn.model import FastSCNN
+from fastscnn.model import FastSCNN, FastSCNNDensity
 from fastscnn.gdrive import load_gdrive_file
 from fastscnn.lr_scheduler import LRScheduler
 from fastscnn.segmentation_metrics import SegmentationMetric
@@ -77,7 +78,7 @@ def train(_run,
   model = FastSCNN(40)
   # Load pretrained weights from coco
   checkpoint = torch.load(load_gdrive_file(pretrained_model, ending='pth'))
-  load_checkpoint(model, checkpoint, strict=True)
+  load_checkpoint(model, checkpoint, strict=False)
   model.to(device)
 
   start_time = time.time()
@@ -93,14 +94,14 @@ def train(_run,
     features = features.transpose([0, 2, 3, 1]).reshape([-1, 128])
     # subsampling (because storing all these embeddings would be too much)
     features = features[np.random.choice(features.shape[0],
-                                         shape=[500],
+                                         size=[500],
                                          replace=False)]
     all_features.append(features)
   all_features = np.array(features)
   print('Loaded all features', flush=True)
 
   # fit GMM
-  gmm = sklearn.mixture.GaussianMixture(
+  gmm = GaussianMixture(
       n_components=n_components,
       covariance_type=covariance_type,
       reg_covar=reg_covar,
@@ -120,7 +121,7 @@ def train(_run,
     features = features.transpose([0, 2, 3, 1]).reshape([-1, 128])
     # subsampling (because storing all these embeddings would be too much)
     features = features[np.random.choice(features.shape[0],
-                                         shape=[500],
+                                         size=[500],
                                          replace=False)]
     all_features.append(features)
   all_features = np.array(features)
