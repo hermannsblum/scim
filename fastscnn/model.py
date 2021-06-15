@@ -66,12 +66,10 @@ class FastSCNNDensity(nn.Module):
     self.feature_fusion = FeatureFusionModule(64, 128, 128)
     self.classifier = Classifer(128, num_classes)
     self.gmm = _TorchGMM(128,
-                    n_components=n_components,
-                    weights=weights,
-                    means=means,
-                    covariances=covariances)
-    # parameters for density estimation
-    self.means_ = torch.nn.Parameter(means, requires_grad=False)
+                         n_components=n_components,
+                         weights=weights,
+                         means=means,
+                         covariances=covariances)
     if self.aux:
       self.auxlayer = nn.Sequential(nn.Conv2d(64, 32, 3, padding=1, bias=False),
                                     nn.BatchNorm2d(32), nn.ReLU(True),
@@ -91,7 +89,7 @@ class FastSCNNDensity(nn.Module):
       auxout = self.auxlayer(higher_res_features)
       auxout = F.interpolate(auxout, size, mode='bilinear', align_corners=True)
       outputs.append(auxout)
-    nll = -self.gmm(feat.permute([0, 2, 3, 1]))
+    nll = -self.gmm(feat.permute([0, 2, 3, 1])).permute([0, 3, 1, 2])
     nll = F.interpolate(nll, size, mode='bilinear', align_corners=True)
     outputs.append(nll)
     return tuple(outputs)
@@ -99,21 +97,26 @@ class FastSCNNDensity(nn.Module):
 
 class _TorchGMM(nn.Module):
 
-  def __init__(self, n_features, n_components, means=None, covariances=None, weights=None):
+  def __init__(self,
+               n_features,
+               n_components,
+               means=None,
+               covariances=None,
+               weights=None):
     super().__init__()
     if weights is None:
       weights = torch.rand((n_components,))
     if covariances is None:
-      covariances = torch.rand((n_components, n_features, n_features))
+      covariances = torch.tile(torch.unsqueeze(torch.eye(n_features), 0),
+                               (n_components, 1, 1))
     if means is None:
       means = torch.rand((n_components, n_features))
     mix = torch.distributions.Categorical(weights)
-    comp  = torch.distributions.Independent(
-        torch.distributions.MultivariateNormal(means, covariances), 1)
+    comp = torch.distributions.MultivariateNormal(means, covariances)
     self.gmm = torch.distributions.MixtureSameFamily(mix, comp)
 
   def forward(self, x):
-    return self.gmm.log_prob(x)
+    return torch.unsqueeze(self.gmm.log_prob(x), 3)
 
 
 class _GMM(nn.Module):
