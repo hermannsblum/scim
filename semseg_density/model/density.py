@@ -45,3 +45,22 @@ class TorchGMM(nn.Module):
 
   def forward(self, x):
     return torch.unsqueeze(self.gmm.log_prob(x), 3)
+
+
+class TorchPCA(torch.nn.Module):
+  def __init__(self, features_in, features_out, mean=None, components=None):
+    if mean is None:
+      mean = torch.rand((features_in,))
+    if components is None:
+      components = torch.rand((features_in, features_out))
+
+    if torch.cuda.is_available():
+      mean = mean.cuda()
+      components = components.cuda()
+
+    self.register_buffer('mean', mean)
+    self.register_buffer('components', components)
+
+  def forward(self, x):
+    mean_features = x - self.mean
+    return torch.matmul(mean_features, self.components)
