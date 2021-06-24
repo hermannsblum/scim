@@ -129,4 +129,4 @@ dmypy.json
 .pyre/
 
 venv/
-fastscnn/settings.py
+semseg_density/settings.py
