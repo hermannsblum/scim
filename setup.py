@@ -1,5 +1,5 @@
 from setuptools import setup
 
-setup(name='fastscnn',
+setup(name='semseg_density',
       version="0.0",
-      packages=['fastscnn', 'fastscnn.data'])
+            packages=['semseg_density', 'semseg_density.data', 'semseg_density.model'])
