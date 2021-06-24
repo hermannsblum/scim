@@ -2,6 +2,7 @@ import tensorflow_datasets as tfds
 import fastscnn.data.coco_segmentation
 import fastscnn.data.nyu_depth_v2
 
+from fastscnn.model.refinenet import rf_lw50, rf_lw101
 from fastscnn.gdrive import load_gdrive_file
 
 tfds.load('coco/2017_panoptic')
@@ -15,3 +16,5 @@ load_gdrive_file('1QvES0v_oHTgmx0sxZsAjvCWQvxS3Z6DO', ending='pth')
 load_gdrive_file('1EnMk9YWPGET2sBBgjni7deadYOYPqn0O', ending='pth')
 load_gdrive_file('1Fk9efJuv07bnNy91l1xzjEFtQ_qyyufR', ending='pth')
 
+rf_lw101(40)
+rf_lw50(40)
