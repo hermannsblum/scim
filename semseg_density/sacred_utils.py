@@ -1,5 +1,5 @@
 from sacred.observers import MongoObserver, FileStorageObserver
-import fastscnn.settings as settings
+import .settings as settings
 
 
 def get_observer():
