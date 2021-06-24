@@ -1,4 +1,6 @@
-batchsize: 12
+batchsize: 8
 epochs: 200
-learning_rate: 0.00001
+auxloss: True
+learning_rate: 0.0001
+pretrained_model: "1QvES0v_oHTgmx0sxZsAjvCWQvxS3Z6DO"
 
