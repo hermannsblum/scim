@@ -1,5 +1,5 @@
 from sacred.observers import MongoObserver, FileStorageObserver
-import .settings as settings
+import semseg_density.settings as settings
 
 
 def get_observer():

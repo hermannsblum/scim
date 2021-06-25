@@ -12,16 +12,16 @@ from shutil import make_archive, copyfile
 from sklearn.mixture import GaussianMixture
 from sklearn.decomposition import PCA
 
-from fastscnn.data.tfds_to_torch import TFDataIterableDataset
-from fastscnn.data.augmentation import augmentation
-from fastscnn.model.refinenet import rf_lw50
-from fastscnn.model.refinenet_uncertainty import RefineNetDensity
-from fastscnn.gdrive import load_gdrive_file
-from fastscnn.lr_scheduler import LRScheduler
-from fastscnn.segmentation_metrics import SegmentationMetric
-from fastscnn.losses import MixSoftmaxCrossEntropyLoss
-from fastscnn.settings import TMPDIR
-from fastscnn.sacred_utils import get_observer
+from semseg_density.data.tfds_to_torch import TFDataIterableDataset
+from semseg_density.data.augmentation import augmentation
+from semseg_density.model.refinenet import rf_lw50
+from semseg_density.model.refinenet_uncertainty import RefineNetDensity
+from semseg_density.gdrive import load_gdrive_file
+from semseg_density.lr_scheduler import LRScheduler
+from semseg_density.segmentation_metrics import SegmentationMetric
+from semseg_density.losses import MixSoftmaxCrossEntropyLoss
+from semseg_density.settings import TMPDIR
+from semseg_density.sacred_utils import get_observer
 
 ex = Experiment()
 ex.observers.append(get_observer())
@@ -76,7 +76,7 @@ def train(_run,
                                            drop_last=True)
 
   # MODEL SETUP
-  model = rf_lw50(pretrained=pretrained_model == 'adelaine')
+  model = rf_lw50(40, pretrained=pretrained_model == 'adelaine')
   # Load pretrained weights
   if pretrained_model and pretrained_model != 'adelaine':
     checkpoint = torch.load(load_gdrive_file(pretrained_model, ending='pth'))
@@ -86,10 +86,10 @@ def train(_run,
   # Create hook to get features from intermediate pytorch layer
   hooks = {}
 
-  def get_activation(name, features=self.features):
+  def get_activation(name, features=hooks):
 
     def hook(model, input, output):
-      hooks['feat'] = output.detach()
+      features['feat'] = output.detach()
 
     return hook
 
@@ -115,7 +115,7 @@ def train(_run,
                                          size=[500],
                                          replace=False)]
     all_features.append(features)
-  all_features = np.array(features)
+  all_features = np.concatenate(all_features, axis=0)
   print('Loaded all features', flush=True)
 
   # fit PCA
@@ -138,16 +138,18 @@ def train(_run,
   for i, (images, _) in enumerate(val_loader):
     images = images.to(device)
 
-    _, features = model(images)
+    out = model(images)
+    features = hooks['feat']
     features = features.to('cpu').detach().numpy()
     # reshaping
-    features = features.transpose([0, 2, 3, 1]).reshape([-1, 128])
+    features = features.transpose([0, 2, 3, 1]).reshape([-1, 256])
     # subsampling (because storing all these embeddings would be too much)
     features = features[np.random.choice(features.shape[0],
                                          size=[500],
                                          replace=False)]
     all_features.append(features)
-  all_features = np.array(features)
+  all_features = np.concatenate(all_features, axis=0)
+
   all_features = pca.transform(all_features)
 
   _run.info['score'] = gmm.score(all_features)

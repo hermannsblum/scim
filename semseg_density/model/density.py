@@ -1,7 +1,7 @@
 import torch
 
 
-class TorchGMM(nn.Module):
+class TorchGMM(torch.nn.Module):
   """GMM for inference in torch."""
 
   def __init__(self,
@@ -49,6 +49,7 @@ class TorchGMM(nn.Module):
 
 class TorchPCA(torch.nn.Module):
   def __init__(self, features_in, features_out, mean=None, components=None):
+    super().__init__()
     if mean is None:
       mean = torch.rand((features_in,))
     if components is None:

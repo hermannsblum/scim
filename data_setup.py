@@ -1,9 +1,9 @@
 import tensorflow_datasets as tfds
-import fastscnn.data.coco_segmentation
-import fastscnn.data.nyu_depth_v2
+import semseg_density.data.coco_segmentation
+import semseg_density.data.nyu_depth_v2
 
-from fastscnn.model.refinenet import rf_lw50, rf_lw101
-from fastscnn.gdrive import load_gdrive_file
+from semseg_density.model.refinenet import rf_lw50, rf_lw101
+from semseg_density.gdrive import load_gdrive_file
 
 tfds.load('coco/2017_panoptic')
 tfds.load('nyu_depth_v2_labeled/labeled')
