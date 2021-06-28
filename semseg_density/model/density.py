@@ -10,7 +10,6 @@ class TorchGMM(torch.nn.Module):
                means=None,
                covariances=None,
                weights=None,
-               covariance_type="tied",
                reg_covar=1e-6):
     super().__init__()
 
@@ -31,16 +30,18 @@ class TorchGMM(torch.nn.Module):
     self.register_buffer('covariances', covariances)
     self.register_buffer('weights', weights)
 
-
     mix = torch.distributions.Categorical(self.weights)
     comp = torch.distributions.MultivariateNormal(self.means, self.covariances)
     self.gmm = torch.distributions.MixtureSameFamily(mix, comp)
 
   def _load_from_state_dict(self, *args, **kwargs):
-    super(_TorchGMM, self)._load_from_state_dict(*args, **kwargs)
+    super()._load_from_state_dict(*args, **kwargs)
     # Ugly fix to make sure distributions can be loaded -> recreate distributions
     mix = torch.distributions.Categorical(self.weights)
-    comp = torch.distributions.MultivariateNormal(self.means, self.covariances)
+    # some numerical issues with storing the covariance, this makes sure it is positive definite
+    diag = torch.tile(torch.unsqueeze(torch.eye(64), 0), (40, 1, 1))
+    comp = torch.distributions.MultivariateNormal(
+        self.means, self.covariances + 0.0001 * diag)
     self.gmm = torch.distributions.MixtureSameFamily(mix, comp)
 
   def forward(self, x):
@@ -48,6 +49,7 @@ class TorchGMM(torch.nn.Module):
 
 
 class TorchPCA(torch.nn.Module):
+
   def __init__(self, features_in, features_out, mean=None, components=None):
     super().__init__()
     if mean is None:
