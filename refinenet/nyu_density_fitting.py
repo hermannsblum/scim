@@ -14,7 +14,7 @@ from sklearn.decomposition import PCA
 
 from semseg_density.data.tfds_to_torch import TFDataIterableDataset
 from semseg_density.data.augmentation import augmentation
-from semseg_density.model.refinenet import rf_lw50
+from semseg_density.model.refinenet import rf_lw50, rf_lw101
 from semseg_density.model.refinenet_uncertainty import RefineNetDensity
 from semseg_density.gdrive import load_gdrive_file
 from semseg_density.lr_scheduler import LRScheduler
@@ -43,11 +43,13 @@ def load_checkpoint(model, state_dict, strict=True):
 
 @ex.main
 def train(_run,
+          size=50,
           n_components=40,
           covariance_type='full',
           batchsize=8,
           reg_covar=1e-6,
           device='cuda',
+          feature_name='mflow_conv_g4_pool',
           pretrained_model='adelaine'):
   # DATA LOADING
   data = tfds.load('nyu_depth_v2_labeled/labeled',
@@ -76,7 +78,12 @@ def train(_run,
                                            drop_last=True)
 
   # MODEL SETUP
-  model = rf_lw50(40, pretrained=pretrained_model == 'adelaine')
+  if size == 50:
+    model = rf_lw50(40, pretrained=pretrained_model == 'adelaine')
+  elif size == 101:
+    model = rf_lw101(40, pretrained=pretrained_model == 'adelaine')
+  else:
+    raise UserWarning("Unknown model size.")
   # Load pretrained weights
   if pretrained_model and pretrained_model != 'adelaine':
     checkpoint = torch.load(load_gdrive_file(pretrained_model, ending='pth'))
@@ -94,9 +101,10 @@ def train(_run,
     return hook
 
   # get feature layer
-  feature_layer = getattr(model, "mflow_conv_g4_pool")
+  #feature_name = "mflow_conv_g3_b3_joint_varout_dimred"
+  feature_layer = getattr(model, feature_name)
   # register hook to get features
-  feature_layer.register_forward_hook(get_activation("mflow_conv_g4_pool"))
+  feature_layer.register_forward_hook(get_activation(feature_name))
 
   start_time = time.time()
   model.eval()
@@ -185,6 +193,7 @@ def train(_run,
                                       pca.components_.T),
                                   means=torch.as_tensor(gmm.means_),
                                   covariances=cov,
+                                  feature_layer=feature_name,
                                   weights=torch.as_tensor(gmm.weights_))
   filename = 'refinenet_nyu_density.pth'
   save_path = os.path.join(TMPDIR, filename)

@@ -15,6 +15,7 @@ class RefineNetDensity(torch.nn.Module):
                covariances=None,
                pca_mean=None,
                pca_components=None,
+               feature_layer="mflow_conv_g4_pool",
                **kwargs):
     super().__init__()
     if size == 50:
@@ -35,9 +36,9 @@ class RefineNetDensity(torch.nn.Module):
       return hook
 
     # get feature layer
-    feature_layer = getattr(self.refinenet, "mflow_conv_g4_pool")
+    feature_layer = getattr(self.refinenet, feature_layer)
     # register hook to get features
-    feature_layer.register_forward_hook(get_activation("mflow_conv_g4_pool"))
+    feature_layer.register_forward_hook(get_activation(feature_layer))
 
     self.pca = TorchPCA(256, 64, mean=pca_mean, components=pca_components)
     self.gmm = TorchGMM(64,
