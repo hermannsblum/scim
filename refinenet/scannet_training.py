@@ -11,7 +11,7 @@ from shutil import make_archive, copyfile
 
 from semseg_density.data.tfds_to_torch import TFDataIterableDataset
 from semseg_density.data.augmentation import augmentation
-from semseg_density.gdrive import load_gdrive_file
+from semseg_density.model.refinenet import rf_lw50, rf_lw101
 from semseg_density.lr_scheduler import LRScheduler
 from semseg_density.segmentation_metrics import SegmentationMetric
 from semseg_density.losses import MixSoftmaxCrossEntropyLoss
