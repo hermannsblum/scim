@@ -23,6 +23,7 @@ import tensorflow.compat.v2 as tf
 import tensorflow_datasets.public_api as tfds
 
 from semseg_density.data.images import resize_with_crop
+from semseg_density.data.nyu_depth_v2 import TRAINING_LABEL_NAMES
 
 _CITATION = """\
 """
@@ -49,6 +50,15 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
           name='25k',
           description='all subsampled images',
       ),
+      ScanNetConfig(
+          name='no-pillow-refridgerator-television',
+          description=
+          'Only contains images without pillow, refridgerator, or television.',
+          classes=[
+              i for i in range(40)
+              if not TRAINING_LABEL_NAMES[i] in ('pilow', 'refridgerator',
+                                                 'television')
+          ]),
   ]
 
   def _info(self):
@@ -110,8 +120,10 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
         if not valid:
           continue
         # reshape to common size
-        labels = resize_with_crop(np.expand_dims(labels, -1), (480, 640), method='nearest').numpy()[..., 0]
-        image = cv2.imread(os.path.join(data_path, scene_dir, 'color', file_name))[..., ::-1]
+        labels = resize_with_crop(np.expand_dims(labels, -1), (480, 640),
+                                  method='nearest').numpy()[..., 0]
+        image = cv2.imread(
+            os.path.join(data_path, scene_dir, 'color', file_name))[..., ::-1]
         image = resize_with_crop(image, (480, 640)).numpy().astype('uint8')
         yield f'{scene_dir}_{index}', {
             'image': image,
