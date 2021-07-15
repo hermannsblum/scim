@@ -40,6 +40,8 @@ class TorchGMM(torch.nn.Module):
     mix = torch.distributions.Categorical(self.weights)
     # some numerical issues with storing the covariance, this makes sure it is positive definite
     diag = torch.tile(torch.unsqueeze(torch.eye(64), 0), (40, 1, 1))
+    if torch.cuda.is_available():
+      diag = diag.cuda()
     comp = torch.distributions.MultivariateNormal(
         self.means, self.covariances + 0.0001 * diag)
     self.gmm = torch.distributions.MixtureSameFamily(mix, comp)

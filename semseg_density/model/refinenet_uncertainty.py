@@ -51,5 +51,5 @@ class RefineNetDensity(torch.nn.Module):
     out = self.refinenet(x)
     features = self.features['feat']
     small_features = self.pca(features.permute([0, 2, 3, 1]))
-    nll = self.gmm(small_features)
+    nll = -self.gmm(small_features)
     return out, nll
