@@ -13,7 +13,7 @@ import semseg_density.data.scannet
 from semseg_density.data.tfds_to_torch import TFDataIterableDataset
 from semseg_density.data.augmentation import augmentation
 from semseg_density.data.images import convert_img_to_float
-from semseg_density.model.refinenet import rf_lw50, rf_lw101
+from semseg_density.model.refinenet import rf_lw50, rf_lw101, get_encoder_and_decoder_params
 from semseg_density.lr_scheduler import LRScheduler
 from semseg_density.segmentation_metrics import SegmentationMetric
 from semseg_density.losses import MixSoftmaxCrossEntropyLoss
@@ -54,13 +54,12 @@ def train(_run,
           batchsize=10,
           epochs=100,
           size=50,
-          learning_rate=1e-4,
+          encoder_lr=5e-4,
+          decoder_lr=5e-3,
           subset='25k',
           device='cuda'):
   # DATA LOADING
-  data = tfds.load(f'scan_net/{subset}',
-                   split='train',
-                   as_supervised=True)
+  data = tfds.load(f'scan_net/{subset}', split='train', as_supervised=True)
   valdata = data.take(1000)
   traindata = data.skip(1000)
 
@@ -68,7 +67,8 @@ def train(_run,
     image = convert_img_to_float(image)
     label = tf.cast(label, tf.int64)
     # the output is 4 times smaller than the input, so transform labels
-    label = tf.image.resize(label[..., tf.newaxis], (120, 160), method='nearest')[..., 0]
+    label = tf.image.resize(label[..., tf.newaxis], (120, 160),
+                            method='nearest')[..., 0]
     # move channel from last to 2nd
     image = tf.transpose(image, perm=[2, 0, 1])
     return image, label
@@ -98,12 +98,19 @@ def train(_run,
         model, device_ids=[*range(torch.cuda.device_count())])
 
   criterion = torch.nn.CrossEntropyLoss(ignore_index=255).to(device)
-  optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-  lr_scheduler = LRScheduler(mode='poly',
-                             base_lr=learning_rate,
-                             nepochs=epochs,
-                             iters_per_epoch=len(train_loader),
-                             power=.9)
+  encoder_params, decoder_params = get_encoder_and_decoder_params(model)
+  encoder_optimizer = torch.optim.Adam(encoder_params, lr=encoder_lr)
+  decoder_optimizer = torch.optim.Adam(decoder_params, lr=decoder_lr)
+  encoder_lr_scheduler = LRScheduler(mode='poly',
+                                     base_lr=encoder_lr,
+                                     nepochs=epochs,
+                                     iters_per_epoch=len(train_loader),
+                                     power=.9)
+  decoder_lr_scheduler = LRScheduler(mode='poly',
+                                     base_lr=decoder_lr,
+                                     nepochs=epochs,
+                                     iters_per_epoch=len(train_loader),
+                                     power=.9)
   metric = SegmentationMetric(40)
 
   def validation(epoch, best_pred):
@@ -135,9 +142,13 @@ def train(_run,
     model.train()
 
     for i, (images, targets) in enumerate(train_loader):
-      cur_lr = lr_scheduler(cur_iters)
-      for param_group in optimizer.param_groups:
-        param_group['lr'] = cur_lr
+      # learning-rate update
+      current_encoder_lr = encoder_lr_scheduler(cur_iters)
+      for param_group in encoder_optimizer.param_groups:
+        param_group['lr'] = current_encoder_lr
+      current_decoder_lr = decoder_lr_scheduler(cur_iters)
+      for param_group in decoder_optimizer.param_groups:
+        param_group['lr'] = current_decoder_lr
 
       images = images.to(device)
       targets = targets.to(device)
@@ -152,12 +163,13 @@ def train(_run,
       cur_iters += 1
       if cur_iters % 100 == 0:
         print(
-            'Epoch: [%2d/%2d] Iter [%4d/%4d] || Time: %4.4f sec || lr: %.8f || Loss: %.4f'
-            % (epoch, epochs, i + 1, len(train_loader),
-               time.time() - start_time, cur_lr, loss.item()),
+            'Epoch: [%2d/%2d] Iter [%4d/%4d] || Time: %4.4f sec || Loss: %.4f' %
+            (epoch, epochs, i + 1, len(train_loader), time.time() - start_time,
+             loss.item()),
             flush=True)
     _run.log_scalar('loss', loss.item(), epoch)
-    _run.log_scalar('learningrate', cur_lr, epoch)
+    _run.log_scalar('encoder_lr', current_encoder_lr, epoch)
+    _run.log_scalar('decoder_lr', current_decoder_lr, epoch)
     validation(epoch, best_pred)
     if epoch % 5 == 0:
       save_checkpoint(model, postfix=f'{epoch}epochs')

@@ -24,6 +24,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import logging
+import re
 
 from .refinenet_layers import conv1x1, conv3x3, CRPBlock
 
@@ -78,6 +80,21 @@ def maybe_download(model_name, model_url, model_dir=None, map_location=None):
     sys.stderr.write('Downloading: "{}" to {}\n'.format(url, cached_file))
     urllib.request.urlretrieve(url, cached_file)
   return torch.load(cached_file, map_location=map_location)
+
+
+def get_encoder_and_decoder_params(model):
+  """Filter model parameters into two groups: encoder and decoder."""
+  logger = logging.getLogger(__name__)
+  enc_params = []
+  dec_params = []
+  for k, v in model.named_parameters():
+    if bool(re.match(".*conv1.*|.*bn1.*|.*layer.*", k)):
+      enc_params.append(v)
+      logger.info(" Enc. parameter: {}".format(k))
+    else:
+      dec_params.append(v)
+      logger.info(" Dec. parameter: {}".format(k))
+  return enc_params, dec_params
 
 
 stages_suffixes = {0: "_conv", 1: "_conv_relu_varout_dimred"}
