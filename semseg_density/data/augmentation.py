@@ -1,9 +1,11 @@
 import tensorflow as tf
 
+from semseg_density.data.images import convert_img_to_float
+
 #@tf.function
 def augmentation(image, label):
   # make sure image is in float space
-  image = tf.image.convert_image_dtype(image, tf.float32)
+  image = convert_img_to_float(image)
   # make sure that label has a last dimension
   added_label_dim = False
   if len(tf.shape(label)) < 3:
@@ -14,7 +16,7 @@ def augmentation(image, label):
     image = tf.image.flip_left_right(image)
     label = tf.image.flip_left_right(label)
   # brightness
-  image = tf.image.random_brightness(image, max_delta=60)
+  image = tf.image.random_brightness(image, max_delta=.1)
   # hue
   image = tf.image.random_hue(image, max_delta=.1)
   # undo label dimensions

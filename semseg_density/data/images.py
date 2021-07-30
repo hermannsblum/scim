@@ -33,3 +33,23 @@ def resize_with_crop(image, shape, method='bilinear'):
         target_width=image_shape[1])
 
   return tf.image.resize(image, (target_h, target_w), method=method)
+
+
+@tf.function
+def convert_img_to_float(image):
+  """
+  Makes sure that the output image is in dtype float32 and has values in [0, 1[.
+  There are two checks performed concerning the value rescaling:
+  a) the image is currently in integer type
+  b) the image has any value >= 1
+  """
+  needs_value_rescaling = False
+  if image.dtype.is_integer:
+    needs_value_rescaling = True
+  tf.cast(image, tf.float32)
+  if not needs_value_rescaling and tf.math.reduce_any(image >= 1.0):
+    needs_value_rescaling = True
+
+  if needs_value_rescaling:
+    image = image / 256.0
+  return image
