@@ -9,8 +9,10 @@ import time
 from collections import OrderedDict
 from shutil import make_archive, copyfile
 
+import semseg_density.data.scannet
 from semseg_density.data.tfds_to_torch import TFDataIterableDataset
 from semseg_density.data.augmentation import augmentation
+from semseg_density.data.images import convert_img_to_float
 from semseg_density.model.refinenet import rf_lw50, rf_lw101
 from semseg_density.lr_scheduler import LRScheduler
 from semseg_density.segmentation_metrics import SegmentationMetric
@@ -51,6 +53,7 @@ def save_checkpoint(model, postfix=None):
 def train(_run,
           batchsize=10,
           epochs=100,
+          size=50,
           learning_rate=1e-4,
           subset='25k',
           device='cuda'):
@@ -62,9 +65,10 @@ def train(_run,
   traindata = data.skip(1000)
 
   def data_converter(image, label):
-    # images are in scale 0-255
-    image = tf.cast(image, tf.float32) / 255
+    image = convert_img_to_float(image)
     label = tf.cast(label, tf.int64)
+    # the output is 4 times smaller than the input, so transform labels
+    label = tf.image.resize(label[..., tf.newaxis], (120, 160), method='nearest')[..., 0]
     # move channel from last to 2nd
     image = tf.transpose(image, perm=[2, 0, 1])
     return image, label
@@ -109,10 +113,10 @@ def train(_run,
     for i, (image, target) in enumerate(val_loader):
       image = image.to(device)
       outputs = model(image)
-      pred = torch.argmax(outputs[0], 1)
+      pred = torch.argmax(outputs, 1)
       pred = pred.cpu().data.numpy()
       metric.update(pred, target.numpy())
-      pixAcc, mIoU = metric.get()
+    pixAcc, mIoU = metric.get()
     print('Epoch %d, validation pixAcc: %.3f%%, mIoU: %.3f%%' %
           (epoch, pixAcc * 100, mIoU * 100))
     _run.log_scalar('val_miou', mIoU, epoch)
@@ -139,7 +143,7 @@ def train(_run,
       targets = targets.to(device)
 
       outputs = model(images)
-      loss = criterion(outputs[:-1], targets)
+      loss = criterion(outputs, targets)
 
       optimizer.zero_grad()
       loss.backward()
