@@ -156,9 +156,11 @@ def train(_run,
       outputs = model(images)
       loss = criterion(outputs, targets)
 
-      optimizer.zero_grad()
+      encoder_optimizer.zero_grad()
+      decoder_optimizer.zero_grad()
       loss.backward()
-      optimizer.step()
+      encoder_optimizer.step()
+      decoder_optimizer.step()
 
       cur_iters += 1
       if cur_iters % 100 == 0:

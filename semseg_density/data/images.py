@@ -46,7 +46,7 @@ def convert_img_to_float(image):
   needs_value_rescaling = False
   if image.dtype.is_integer:
     needs_value_rescaling = True
-  tf.cast(image, tf.float32)
+  image = tf.cast(image, tf.float32)
   if not needs_value_rescaling and tf.math.reduce_any(image >= 1.0):
     needs_value_rescaling = True
 
