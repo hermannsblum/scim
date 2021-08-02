@@ -19,4 +19,6 @@ load_gdrive_file('1EnMk9YWPGET2sBBgjni7deadYOYPqn0O', ending='pth')
 load_gdrive_file('1Fk9efJuv07bnNy91l1xzjEFtQ_qyyufR', ending='pth')
 
 rf_lw101(40)
+rf_lw101(40, imagenet=True)
 rf_lw50(40)
+rf_lw50(40, imagenet=True)
