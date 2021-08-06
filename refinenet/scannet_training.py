@@ -56,6 +56,7 @@ def train(_run,
           size=50,
           encoder_lr=5e-4,
           decoder_lr=5e-3,
+          groupnorm=False,
           subset='25k',
           device='cuda'):
   # DATA LOADING
@@ -87,9 +88,9 @@ def train(_run,
 
   # MODEL SETUP
   if size == 50:
-    model = rf_lw50(40, imagenet=True)
+    model = rf_lw50(40, imagenet=True, groupnorm=groupnorm)
   elif size == 101:
-    model = rf_lw101(40, imagenet=True)
+    model = rf_lw101(40, imagenet=True, groupnorm=groupnorm)
   else:
     raise UserWarning("Unknown model size.")
   model.to(device)
