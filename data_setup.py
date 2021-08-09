@@ -18,6 +18,7 @@ load_gdrive_file('1yb7izcZyyjL3Bm-Y1vNoUyHBWOhqUen_', ending='pth')
 load_gdrive_file('1QvES0v_oHTgmx0sxZsAjvCWQvxS3Z6DO', ending='pth')
 load_gdrive_file('1EnMk9YWPGET2sBBgjni7deadYOYPqn0O', ending='pth')
 load_gdrive_file('1Fk9efJuv07bnNy91l1xzjEFtQ_qyyufR', ending='pth')
+load_gdrive_file('1mjQPljaUqd6g2cjkfQIm8QbXOd-Qg6NU', ending='pth')
 
 rf_lw101(40)
 rf_lw50(40)
