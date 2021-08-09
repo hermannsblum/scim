@@ -35,11 +35,12 @@ Various Splits of Data from the ScanNet dataset.
 
 class ScanNetConfig(tfds.core.BuilderConfig):
 
-  def __init__(self, scene, classes=range(40), **kwargs):
+  def __init__(self, scene, classes=range(40), subsampling=None, **kwargs):
     super().__init__(version='1.0.0', **kwargs)
     self.classes = list(classes)
     assert isinstance(scene, int) or scene in ('25k', '0to9')
     self.scene = scene
+    self.subsampling = subsampling
 
 
 class ScanNet(tfds.core.GeneratorBasedBuilder):
@@ -60,6 +61,7 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
           name='0to9',
           description='All frames from scene 0 to 9',
           scene='0to9',
+          subsampling=20,
       ),
       ScanNetConfig(
           name='no-pillow-refridgerator-television',
@@ -83,6 +85,8 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
     return tfds.core.DatasetInfo(
         builder=self,
         description=_DESCRIPTION,
+        # only 25k should be shuffled
+        disable_shuffling=self.builder_config.scene != '25k',
         features=tfds.features.FeaturesDict(features),
         supervised_keys=('image', 'labels'),
         homepage='http://www.scan-net.org',
@@ -131,14 +135,19 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
 
   def _generate_examples(self, data_path):
     """Yields examples."""
-    for scene_dir in tf.io.gfile.listdir(data_path):
+    subsampler = 0
+    for scene_dir in sorted(tf.io.gfile.listdir(data_path)):
       if isinstance(
           self.builder_config.scene, int
       ) and not scene_dir.startswith(f'scene{self.builder_config.scene:4d}'):
         continue
-      for file_name in tf.io.gfile.listdir(
-          os.path.join(data_path, scene_dir, 'color')):
-        index = file_name.split('.')[0]
+      for file_name in sorted(
+          tf.io.gfile.listdir(os.path.join(data_path, scene_dir, 'color'))):
+        subsampler += 1
+        if (self.builder_config.subsampling is not None) and (
+            subsampler % self.builder_config.subsampling != 0):
+          continue
+        index = int(file_name.split('.')[0])
         if os.path.exists(os.path.join(data_path, scene_dir, 'label')):
           labels = cv2.imread(
               os.path.join(data_path, scene_dir, 'label', f'{index}.png'),
@@ -172,11 +181,16 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
         image = cv2.imread(
             os.path.join(data_path, scene_dir, 'color', file_name))[..., ::-1]
         image = resize_with_crop(image, (480, 640)).numpy().astype('uint8')
-        yield f'{scene_dir}_{index}', {
+
+        # create an integer key, required if shuffling is disabled
+        scenenum = int(scene_dir.split('_')[0][5:])
+        trajectorynum = int(scene_dir.split('_')[1])
+        key = scenenum * 100000 + trajectorynum * 10000 + index
+        yield key, {
             'image': image,
             'labels': labels,
             'scene': scene_dir,
-            'name': f'{scene_dir}_{index}',
+            'name': f'{scene_dir}_{index:05d}',
         }
 
 
