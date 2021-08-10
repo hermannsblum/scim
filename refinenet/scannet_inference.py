@@ -74,6 +74,7 @@ def run_scannet_inference(pretrained_model,
 
     # run inference
     logits, nll = model(image.to(device))
+    max_logit = torch.max(logits, 1)
     softmax_entropy = torch.distributions.categorical.Categorical(
             logits=logits.permute(0, 2, 3, 1)).entropy()
 
@@ -81,6 +82,7 @@ def run_scannet_inference(pretrained_model,
     name = blob['name'].numpy().decode()
     np.save(os.path.join(directory, f'{name}_nll.npy'), nll[0].detach().to('cpu').numpy())
     np.save(os.path.join(directory, f'{name}_entropy.npy'), softmax_entropy[0].detach().to('cpu').numpy())
+    np.save(os.path.join(directory, f'{name}_maxlogit.npy'), max_logit[0].detach().to('cpu').numpy())
     np.save(os.path.join(directory, f'{name}_label.npy'), label.numpy())
 
 if __name__ == '__main__':
