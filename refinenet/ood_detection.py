@@ -1,13 +1,8 @@
 from sacred import Experiment
-import torch
-import tensorflow_datasets as tfds
-import tensorflow as tf
 import os
 import numpy as np
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-
-tf.config.set_visible_devices([], 'GPU')
 
 from semseg_density.gdrive import load_gdrive_file
 from semseg_density.settings import TMPDIR, EXP_OUT
@@ -32,13 +27,14 @@ def scatter(
   out_b = []
 
   # map labels to in-domain (0) or out-domain (1)
-  ood_map = np.zeros(40, dtype='uint8')
+  ood_map = 255 * np.ones(256, dtype='uint8')
+  ood_map[:40] = 0
   for c in range(40):
     if TRAINING_LABEL_NAMES[c] in out_classes:
       ood_map[c] = 1
 
   frames = [x[:-10] for x in os.listdir(directory) if x.endswith('label.npy')]
-  for frame in tqdm(frames):
+  for frame in tqdm(frames[:500]):
     label = np.load(os.path.join(directory, f'{frame}_label.npy'))
     ood = ood_map[label]
     a_val = np.load(os.path.join(directory, f'{frame}_{a}.npy'))
@@ -56,13 +52,13 @@ def scatter(
   plt.scatter(in_a,
               in_b,
               c="black",
-              alpha=0.05,
+              alpha=0.002,
               linewidths=0.0,
               rasterized=True)
   plt.scatter(out_a,
               out_b,
               c="red",
-              alpha=0.05,
+              alpha=0.002,
               linewidths=0.0,
               rasterized=True)
   plt.xlabel(a)
