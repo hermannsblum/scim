@@ -2,13 +2,17 @@ from sacred import Experiment
 import torch
 import tensorflow_datasets as tfds
 import tensorflow as tf
+import os
+import numpy as np
+from tqdm import tqdm
 
 tf.config.set_visible_devices([], 'GPU')
 
 from semseg_density.data.images import convert_img_to_float
 from semseg_density.model.refinenet import rf_lw50, rf_lw101
+from semseg_density.gdrive import load_gdrive_file
 from semseg_density.model.refinenet_uncertainty import RefineNetDensity
-from semseg_density.settings import TMPDIR
+from semseg_density.settings import TMPDIR, EXP_OUT
 
 ex = Experiment()
 
@@ -51,17 +55,33 @@ def run_scannet_inference(pretrained_model,
   model.to(device)
   model.eval()
 
-  for blob in data:
+  # make sure the directory exists, but is empty
+  directory = os.path.join(EXP_OUT, 'scannet_inference', subset, pretrained_model)
+  os.makedirs(directory, exist_ok=True)
+  os.rmdir(directory)
+  os.makedirs(directory, exist_ok=True)
+
+  for blob in tqdm(data):
     image = convert_img_to_float(blob['image'])
     # move channel from last to 2nd
-    image = tf.transpose(image, perm=[2, 0, 1])
+    image = tf.transpose(image, perm=[2, 0, 1])[tf.newaxis]
+    image = torch.from_numpy(image.numpy())
 
-    label = tf.cast(blob['label'], tf.int64)
+    label = tf.cast(blob['labels'], tf.int64)
     # the output is 4 times smaller than the input, so transform labels
     label = tf.image.resize(label[..., tf.newaxis], (120, 160),
                             method='nearest')[..., 0]
 
-    name = blob['name'].numpy().decode()
-    print(name)
+    # run inference
+    logits, nll = model(image.to(device))
+    softmax_entropy = torch.distributions.categorical.Categorical(
+            logits=logits.permute(0, 2, 3, 1)).entropy()
 
-    break
+    # store outputs
+    name = blob['name'].numpy().decode()
+    np.save(os.path.join(directory, f'{name}_nll.npy'), nll[0].detach().to('cpu').numpy())
+    np.save(os.path.join(directory, f'{name}_entropy.npy'), softmax_entropy[0].detach().to('cpu').numpy())
+    np.save(os.path.join(directory, f'{name}_label.npy'), label.numpy())
+
+if __name__ == '__main__':
+  ex.run_commandline()

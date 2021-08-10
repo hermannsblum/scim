@@ -16,8 +16,8 @@ class TorchGMM(torch.nn.Module):
     if weights is None:
       weights = torch.rand((n_components,))
     if covariances is None:
-      covariances = torch.tile(torch.unsqueeze(torch.eye(n_features), 0),
-                               (n_components, 1, 1))
+      covariances = torch.unsqueeze(torch.eye(n_features), 0).repeat(
+                               n_components, 1, 1)
     if means is None:
       means = torch.rand((n_components, n_features))
 
@@ -39,7 +39,7 @@ class TorchGMM(torch.nn.Module):
     # Ugly fix to make sure distributions can be loaded -> recreate distributions
     mix = torch.distributions.Categorical(self.weights)
     # some numerical issues with storing the covariance, this makes sure it is positive definite
-    diag = torch.tile(torch.unsqueeze(torch.eye(64), 0), (40, 1, 1))
+    diag = torch.unsqueeze(torch.eye(64), 0).repeat(40, 1, 1)
     if torch.cuda.is_available():
       diag = diag.cuda()
     comp = torch.distributions.MultivariateNormal(
