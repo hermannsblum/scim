@@ -63,7 +63,7 @@ def scatter(
               rasterized=True)
   plt.xlabel(a)
   plt.ylabel(b)
-  plt.savefig(os.path.join(directory, 'ood_scatter.pdf'), dpi=400)
+  plt.savefig(os.path.join(directory, 'ood_{a}_{b}_scatter.pdf'), dpi=400)
 
 
 if __name__ == '__main__':
