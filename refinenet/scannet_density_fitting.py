@@ -195,7 +195,7 @@ def train(_run,
                                   covariances=cov,
                                   feature_layer=feature_name,
                                   weights=torch.as_tensor(gmm.weights_))
-  filename = 'refinenet_nyu_density.pth'
+  filename = 'refinenet_scannet_density.pth'
   save_path = os.path.join(TMPDIR, filename)
   torch.save(densitymodel.state_dict(), save_path)
   _run.add_artifact(save_path)
