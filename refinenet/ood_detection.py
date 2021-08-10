@@ -19,16 +19,17 @@ ex = Experiment()
 @ex.main
 def scatter(
     path,
-    out_classes=['pilow', 'refridgerator',
-                                                 'television'],
+    a='nll',
+    b='maxlogit',
+    out_classes=['pilow', 'refridgerator', 'television'],
 ):
   # make sure the directory exists, but is empty
   directory = os.path.join(EXP_OUT, path)
 
-  in_nll = []
-  out_nll = []
-  in_entropy = []
-  out_entropy = []
+  in_a = []
+  out_a = []
+  in_b = []
+  out_b = []
 
   # map labels to in-domain (0) or out-domain (1)
   ood_map = np.zeros(40, dtype='uint8')
@@ -40,32 +41,32 @@ def scatter(
   for frame in tqdm(frames):
     label = np.load(os.path.join(directory, f'{frame}_label.npy'))
     ood = ood_map[label]
-    nll = np.load(os.path.join(directory, f'{frame}_nll.npy'))
-    entropy = np.load(os.path.join(directory, f'{frame}_entropy.npy'))
-    in_nll.append(nll[ood == 0].reshape((-1)))
-    in_entropy.append(entropy[ood == 0].reshape((-1)))
-    out_nll.append(nll[ood == 1].reshape((-1)))
-    out_entropy.append(entropy[ood == 1].reshape((-1)))
-  in_nll = np.concatenate(in_nll)
-  out_nll = np.concatenate(out_nll)
-  in_entropy = np.concatenate(in_entropy)
-  out_entropy = np.concatenate(out_entropy)
+    a_val = np.load(os.path.join(directory, f'{frame}_{a}.npy'))
+    b_val = np.load(os.path.join(directory, f'{frame}_{b}.npy'))
+    in_a.append(a_val[ood == 0].reshape((-1)))
+    in_b.append(b_val[ood == 0].reshape((-1)))
+    out_a.append(a_val[ood == 1].reshape((-1)))
+    out_b.append(v_val[ood == 1].reshape((-1)))
+  in_a = np.concatenate(in_a)
+  out_a = np.concatenate(out_a)
+  in_b = np.concatenate(in_b)
+  out_b = np.concatenate(out_b)
 
   plt.figure(figsize=(10, 10))
-  plt.scatter(in_nll,
-              in_entropy,
+  plt.scatter(in_a,
+              in_b,
               c="black",
               alpha=0.05,
               linewidths=0.0,
               rasterized=True)
-  plt.scatter(out_nll,
-              out_entropy,
+  plt.scatter(out_a,
+              out_b,
               c="red",
               alpha=0.05,
               linewidths=0.0,
               rasterized=True)
-  plt.xlabel('Latent Density')
-  plt.ylabel('Softmax Entropy')
+  plt.xlabel(a)
+  plt.ylabel(b)
   plt.savefig(os.path.join(directory, 'ood_scatter.pdf'), dpi=400)
 
 
