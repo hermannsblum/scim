@@ -1,5 +1,6 @@
 from sacred import Experiment
 import torch
+import torchmetrics
 import tensorflow_datasets as tfds
 import tensorflow as tf
 import os
@@ -62,6 +63,8 @@ def run_scannet_inference(pretrained_model,
   shutil.rmtree(directory)
   os.makedirs(directory, exist_ok=True)
 
+  cm = torchmetrics.ConfusionMatrix(num_classes=40, compute_on_step=False)
+
   for blob in tqdm(data):
     image = convert_img_to_float(blob['image'])
     # move channel from last to 2nd
@@ -71,20 +74,26 @@ def run_scannet_inference(pretrained_model,
     label = tf.cast(blob['labels'], tf.int64)
     # the output is 4 times smaller than the input, so transform labels
     label = tf.image.resize(label[..., tf.newaxis], (120, 160),
-                            method='nearest')[..., 0]
+                            method='nearest')[..., 0].numpy()
 
     # run inference
     logits, nll = model(image.to(device))
+    pred = torch.argmax(logits, 1)
     max_logit = torch.max(logits, 1)
     softmax_entropy = torch.distributions.categorical.Categorical(
             logits=logits.permute(0, 2, 3, 1)).entropy()
+
+    # update confusion matrix
+    cm.update(pred[0], torch.from_numpy(label))
 
     # store outputs
     name = blob['name'].numpy().decode()
     np.save(os.path.join(directory, f'{name}_nll.npy'), nll[0].detach().to('cpu').numpy())
     np.save(os.path.join(directory, f'{name}_entropy.npy'), softmax_entropy[0].detach().to('cpu').numpy())
     np.save(os.path.join(directory, f'{name}_maxlogit.npy'), max_logit[0].detach().to('cpu').numpy())
-    np.save(os.path.join(directory, f'{name}_label.npy'), label.numpy())
+    np.save(os.path.join(directory, f'{name}_label.npy'), label)
+
+  np.save(os.path.join(directory, 'confusion_matrix.npy'), cm.compute().numpy())
 
 if __name__ == '__main__':
   ex.run_commandline()
