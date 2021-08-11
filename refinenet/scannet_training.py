@@ -42,7 +42,10 @@ def save_checkpoint(model, postfix=None):
   """Save Checkpoint"""
   filename = 'refinenet_scannet.pth'
   save_path = os.path.join(TMPDIR, filename)
-  torch.save(model.state_dict(), save_path)
+  if hasattr(model, 'module'):
+    torch.save(model.module.state_dict(), save_path)
+  else:
+    torch.save(model.state_dict(), save_path)
   if postfix is not None:
     best_filename = f'refinenet_scannet_{postfix}.pth'
     best_filename = os.path.join(TMPDIR, best_filename)
