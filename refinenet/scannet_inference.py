@@ -3,6 +3,7 @@ import torch
 import tensorflow_datasets as tfds
 import tensorflow as tf
 import os
+import shutil
 import numpy as np
 from tqdm import tqdm
 
@@ -58,7 +59,7 @@ def run_scannet_inference(pretrained_model,
   # make sure the directory exists, but is empty
   directory = os.path.join(EXP_OUT, 'scannet_inference', subset, pretrained_model)
   os.makedirs(directory, exist_ok=True)
-  os.rmdir(directory)
+  shutil.rmtree(directory)
   os.makedirs(directory, exist_ok=True)
 
   for blob in tqdm(data):
