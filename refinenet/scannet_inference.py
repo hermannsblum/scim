@@ -7,10 +7,13 @@ import os
 import shutil
 import numpy as np
 from tqdm import tqdm
+from sklearn.metrics import ConfusionMatrixDisplay
+import matplotlib.pyplot as plt
 
 tf.config.set_visible_devices([], 'GPU')
 
 from semseg_density.data.images import convert_img_to_float
+from semseg_density.data.nyu_depth_v2 import TRAINING_LABEL_NAMES
 from semseg_density.model.refinenet import rf_lw50, rf_lw101
 from semseg_density.gdrive import load_gdrive_file
 from semseg_density.model.refinenet_uncertainty import RefineNetDensity
@@ -58,7 +61,8 @@ def run_scannet_inference(pretrained_model,
   model.eval()
 
   # make sure the directory exists, but is empty
-  directory = os.path.join(EXP_OUT, 'scannet_inference', subset, pretrained_model)
+  directory = os.path.join(EXP_OUT, 'scannet_inference', subset,
+                           pretrained_model)
   os.makedirs(directory, exist_ok=True)
   shutil.rmtree(directory)
   os.makedirs(directory, exist_ok=True)
@@ -81,19 +85,29 @@ def run_scannet_inference(pretrained_model,
     pred = torch.argmax(logits, 1)
     max_logit = torch.max(logits, 1)
     softmax_entropy = torch.distributions.categorical.Categorical(
-            logits=logits.permute(0, 2, 3, 1)).entropy()
+        logits=logits.permute(0, 2, 3, 1)).entropy()
 
     # update confusion matrix
     cm.update(pred[0], torch.from_numpy(label))
 
     # store outputs
     name = blob['name'].numpy().decode()
-    np.save(os.path.join(directory, f'{name}_nll.npy'), nll[0].detach().to('cpu').numpy())
-    np.save(os.path.join(directory, f'{name}_entropy.npy'), softmax_entropy[0].detach().to('cpu').numpy())
-    np.save(os.path.join(directory, f'{name}_maxlogit.npy'), max_logit[0].detach().to('cpu').numpy())
+    np.save(os.path.join(directory, f'{name}_nll.npy'),
+            nll[0].detach().to('cpu').numpy())
+    np.save(os.path.join(directory, f'{name}_entropy.npy'),
+            softmax_entropy[0].detach().to('cpu').numpy())
+    np.save(os.path.join(directory, f'{name}_maxlogit.npy'),
+            max_logit[0].detach().to('cpu').numpy())
     np.save(os.path.join(directory, f'{name}_label.npy'), label)
 
-  np.save(os.path.join(directory, 'confusion_matrix.npy'), cm.compute().numpy())
+  cm = cm.compute().numpy()
+  np.save(os.path.join(directory, 'confusion_matrix.npy'), cm)
+  disp = ConfusionMatrixDisplay(cm / cm.sum(0),
+                                display_labels=TRAINING_LABEL_NAMES)
+  plt.figure(figsize=(20, 20))
+  disp.plot(ax=plt.gca(), xticks_rotation='vertical', include_values=False)
+  plt.savefig(os.path.join(directory, 'confusion_matrix.pdf'))
+
 
 if __name__ == '__main__':
   ex.run_commandline()
