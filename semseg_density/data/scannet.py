@@ -73,6 +73,15 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
               if not TRAINING_LABEL_NAMES[i] in ('pilow', 'refridgerator',
                                                  'television')
           ]),
+      ScanNetConfig(
+          name='no-lamp',
+          scene='25k',
+          description=
+          'Only contains images without lamps.',
+          classes=[
+              i for i in range(40)
+              if not TRAINING_LABEL_NAMES[i] in ('lamp')
+          ]),
   ]
 
   def _info(self):
