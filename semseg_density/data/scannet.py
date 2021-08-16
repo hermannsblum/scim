@@ -73,6 +73,15 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
               if not TRAINING_LABEL_NAMES[i] in ('pilow', 'refridgerator',
                                                  'television')
           ]),
+      ScanNetConfig(
+          name='no-lamp',
+          scene='25k',
+          description=
+          'Only contains images without lamps.',
+          classes=[
+              i for i in range(40)
+              if not TRAINING_LABEL_NAMES[i] in ('lamp')
+          ]),
   ]
 
   def _info(self):
@@ -150,7 +159,7 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
         index = int(file_name.split('.')[0])
         if os.path.exists(os.path.join(data_path, scene_dir, 'label')):
           labels = cv2.imread(
-              os.path.join(data_path, scene_dir, 'label', f'{index}.png'),
+              os.path.join(data_path, scene_dir, 'label', f'{index:06d}.png'),
               cv2.IMREAD_ANYDEPTH)
           # labels are alrady mapped to NYU, but not our format
           labels[labels == 0] = 256
@@ -159,7 +168,7 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
           assert os.path.exists(os.path.join(data_path, scene_dir,
                                              'label-filt'))
           raw_labels = cv2.imread(
-              os.path.join(data_path, scene_dir, 'label-filt', f'{index}.png'),
+              os.path.join(data_path, scene_dir, 'label-filt', f'{index:06d}.png'),
               cv2.IMREAD_ANYDEPTH)
           # apply mapping
           labels = SCANNET_TO_NYU40[raw_labels]
@@ -190,7 +199,7 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
             'image': image,
             'labels': labels,
             'scene': scene_dir,
-            'name': f'{scene_dir}_{index:05d}',
+            'name': f'{scene_dir}_{index:06d}',
         }
 
 
