@@ -83,8 +83,12 @@ def run_scannet_inference(pretrained_model,
     softmax_entropy = torch.distributions.categorical.Categorical(
             logits=logits.permute(0, 2, 3, 1)).entropy()
 
-    # update confusion matrix
-    cm.update(pred[0], torch.from_numpy(label))
+    # update confusion matrix, only on labelled pixels
+    if np.any(label != 255):
+      torch_label = torch.from_numpy(label)
+      valid_pred = pred[0].detach().to('cpu')[torch_label != 255]
+      valid_label = torch_label[torch_label != 255]
+      cm.update(valid_pred, valid_label)
 
     # store outputs
     name = blob['name'].numpy().decode()
