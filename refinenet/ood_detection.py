@@ -36,13 +36,13 @@ def scatter(
   frames = [x[:-10] for x in os.listdir(directory) if x.endswith('label.npy')]
   for frame in tqdm(frames[:500]):
     label = np.load(os.path.join(directory, f'{frame}_label.npy'))
-    ood = ood_map[label]
-    a_val = np.load(os.path.join(directory, f'{frame}_{a}.npy'))
-    b_val = np.load(os.path.join(directory, f'{frame}_{b}.npy'))
+    ood = ood_map[label].squeeze()
+    a_val = np.load(os.path.join(directory, f'{frame}_{a}.npy')).squeeze()
+    b_val = np.load(os.path.join(directory, f'{frame}_{b}.npy')).squeeze()
     in_a.append(a_val[ood == 0].reshape((-1)))
     in_b.append(b_val[ood == 0].reshape((-1)))
     out_a.append(a_val[ood == 1].reshape((-1)))
-    out_b.append(v_val[ood == 1].reshape((-1)))
+    out_b.append(b_val[ood == 1].reshape((-1)))
   in_a = np.concatenate(in_a)
   out_a = np.concatenate(out_a)
   in_b = np.concatenate(in_b)
@@ -52,18 +52,18 @@ def scatter(
   plt.scatter(in_a,
               in_b,
               c="black",
-              alpha=0.002,
+              alpha=0.01,
               linewidths=0.0,
               rasterized=True)
   plt.scatter(out_a,
               out_b,
               c="red",
-              alpha=0.002,
+              alpha=0.01,
               linewidths=0.0,
               rasterized=True)
   plt.xlabel(a)
   plt.ylabel(b)
-  plt.savefig(os.path.join(directory, 'ood_{a}_{b}_scatter.pdf'), dpi=400)
+  plt.savefig(os.path.join(directory, f'ood_{a}_{b}_scatter.pdf'), dpi=400)
 
 
 if __name__ == '__main__':

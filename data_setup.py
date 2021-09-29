@@ -11,6 +11,7 @@ tfds.load('nyu_depth_v2_labeled/labeled')
 tfds.load('coco_segmentation')
 tfds.load('scan_net/25k')
 tfds.load('scan_net/no-pillow-refridgerator-television')
+tfds.load('scan_net/no-lamp')
 tfds.load('scan_net/0to9')
 
 load_gdrive_file('15vSz0eBSjN4K1b3DvKZ1PQTtW4cY-_2W', ending='pth')
