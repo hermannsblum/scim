@@ -1,5 +1,6 @@
-feature_name: mflow_conv_g3_b3_joint_varout_dimred
+#feature_name: mflow_conv_g3_b3_joint_varout_dimred
+feature_name: mflow_conv_g4_pool
+batchsize: 2
 n_components: 40
 covariance_type: full
 reg_covar: 0.000001
-pretrained_model: adelaine

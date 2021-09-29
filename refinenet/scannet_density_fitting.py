@@ -22,7 +22,7 @@ from semseg_density.lr_scheduler import LRScheduler
 from semseg_density.segmentation_metrics import SegmentationMetric
 from semseg_density.losses import MixSoftmaxCrossEntropyLoss
 from semseg_density.settings import TMPDIR
-from semseg_density.sacred_utils import get_observer
+from semseg_density.sacred_utils import get_observer, get_incense_loader
 
 ex = Experiment()
 ex.observers.append(get_observer())
@@ -46,6 +46,7 @@ def load_checkpoint(model, state_dict, strict=True):
 def train(_run,
           subset,
           size=50,
+          groupnorm=False,
           n_components=40,
           covariance_type='full',
           batchsize=8,
@@ -79,15 +80,22 @@ def train(_run,
 
   # MODEL SETUP
   if size == 50:
-    model = rf_lw50(40, pretrained=pretrained_model == 'adelaine')
+    model = rf_lw50(40, pretrained=pretrained_model == 'adelaine', groupnorm=groupnorm)
   elif size == 101:
-    model = rf_lw101(40, pretrained=pretrained_model == 'adelaine')
+    model = rf_lw101(40, pretrained=pretrained_model == 'adelaine', groupnorm=groupnorm)
   else:
     raise UserWarning("Unknown model size.")
   # Load pretrained weights
-  if pretrained_model and pretrained_model != 'adelaine':
+  if pretrained_model and pretrained_model != 'adelaine' and isinstance(pretrained_model, str):
     checkpoint = torch.load(load_gdrive_file(pretrained_model, ending='pth'))
     load_checkpoint(model, checkpoint, strict=False)
+  elif pretrained_model and isinstance(pretrained_model, int):
+    loader = get_incense_loader()
+    train_exp = loader.find_by_id(pretrained_model)
+    train_exp.artifacts['refinenet_scannet_best.pth'].save(TMPDIR)
+    checkpoint = torch.load(os.path.join(TMPDIR, f'{pretrained_model}_refinenet_scannet_best.pth'))
+    load_checkpoint(model, checkpoint, strict=True)
+    pretrained_model = str(pretrained_model)
   model.to(device)
 
   # Create hook to get features from intermediate pytorch layer
@@ -187,6 +195,8 @@ def train(_run,
 
   densitymodel = RefineNetDensity(40,
                                   size=size,
+                                  pretrained=False,
+                                  groupnorm=groupnorm,
                                   n_components=n_components,
                                   pca_mean=torch.as_tensor(pca.mean_),
                                   pca_components=torch.as_tensor(
@@ -195,6 +205,7 @@ def train(_run,
                                   covariances=cov,
                                   feature_layer=feature_name,
                                   weights=torch.as_tensor(gmm.weights_))
+  load_checkpoint(densitymodel.refinenet, checkpoint, strict=True)
   filename = 'refinenet_scannet_density.pth'
   save_path = os.path.join(TMPDIR, filename)
   torch.save(densitymodel.state_dict(), save_path)

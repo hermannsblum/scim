@@ -18,6 +18,7 @@ from semseg_density.model.refinenet import rf_lw50, rf_lw101
 from semseg_density.gdrive import load_gdrive_file
 from semseg_density.model.refinenet_uncertainty import RefineNetDensity
 from semseg_density.settings import TMPDIR, EXP_OUT
+from semseg_density.sacred_utils import get_incense_loader
 
 ex = Experiment()
 
@@ -37,7 +38,7 @@ def load_checkpoint(model, state_dict, strict=True):
 
 
 @ex.main
-def run_scannet_inference(pretrained_model,
+def run_density_refinenet(pretrained_model,
                           subset,
                           n_components,
                           feature_layer='mflow_conv_g4_pool',
@@ -52,11 +53,20 @@ def run_scannet_inference(pretrained_model,
   model = RefineNetDensity(40,
                            size=size,
                            n_components=n_components,
+                           groupnorm=groupnorm,
                            feature_layer=feature_layer)
   # Load pretrained weights
-  if pretrained_model and pretrained_model != 'adelaine':
+  if pretrained_model and isinstance(pretrained_model, str):
     checkpoint = torch.load(load_gdrive_file(pretrained_model, ending='pth'))
     load_checkpoint(model, checkpoint, strict=False)
+  elif pretrained_model and isinstance(pretrained_model, int):
+    loader = get_incense_loader()
+    train_exp = loader.find_by_id(pretrained_model)
+    train_exp.artifacts['refinenet_scannet_density.pth'].save(TMPDIR)
+    checkpoint = torch.load(os.path.join(TMPDIR, f'{pretrained_model}_refinenet_scannet_density.pth'))
+    load_checkpoint(model, checkpoint, strict=False)
+    pretrained_model = str(pretrained_model)
+
   model.to(device)
   model.eval()
 
