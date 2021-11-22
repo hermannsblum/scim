@@ -1,3 +1,7 @@
+import resource
+low, high = resource.getrlimit(resource.RLIMIT_NOFILE)
+resource.setrlimit(resource.RLIMIT_NOFILE, (high, high))
+
 import tensorflow_datasets as tfds
 import semseg_density.data.coco_segmentation
 import semseg_density.data.nyu_depth_v2
