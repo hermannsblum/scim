@@ -129,5 +129,6 @@ dmypy.json
 .pyre/
 
 venv/
+ws_py/
 semseg_density/settings.py
 .vscode/
