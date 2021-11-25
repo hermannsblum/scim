@@ -13,6 +13,7 @@ from collections import OrderedDict
 from shutil import make_archive, copyfile
 import hnswlib
 
+import semseg_density.data.scannet
 from semseg_density.data.tfds_to_torch import TFDataIterableDataset
 from semseg_density.data.augmentation import augmentation
 from semseg_density.data.images import convert_img_to_float

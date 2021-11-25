@@ -14,6 +14,7 @@ tf.config.set_visible_devices([], 'GPU')
 
 from semseg_density.data.images import convert_img_to_float
 from semseg_density.data.nyu_depth_v2 import TRAINING_LABEL_NAMES
+import semseg_density.data.scannet
 from semseg_density.model.refinenet import rf_lw50, rf_lw101
 from semseg_density.gdrive import load_gdrive_file
 from semseg_density.model.refinenet_uncertainty import RefineNetDensity
