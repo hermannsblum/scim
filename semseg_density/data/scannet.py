@@ -168,7 +168,7 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
           assert os.path.exists(os.path.join(data_path, scene_dir,
                                              'label-filt'))
           raw_labels = cv2.imread(
-              os.path.join(data_path, scene_dir, 'label-filt', f'{index:06d}.png'),
+              os.path.join(data_path, scene_dir, 'label-filt', f'{index}.png'),
               cv2.IMREAD_ANYDEPTH)
           # apply mapping
           labels = SCANNET_TO_NYU40[raw_labels]
