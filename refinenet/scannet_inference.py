@@ -4,7 +4,9 @@ import torchmetrics
 import tensorflow_datasets as tfds
 import tensorflow as tf
 import os
+import cv2
 import shutil
+import pickle
 import numpy as np
 from tqdm import tqdm
 from sklearn.metrics import ConfusionMatrixDisplay
@@ -37,14 +39,8 @@ def load_checkpoint(model, state_dict, strict=True):
   else:
     model.load_state_dict(state_dict, strict=strict)
 
-@ex.command
-def run_refinenet(pretrained_model,
-                          subset,
-                          n_components,
-                          device='cuda',
-                          groupnorm=False):
-  data = tfds.load(f'scan_net/{subset}', split='train')
 
+def get_model(pretrained_model, groupnorm):
   # MODEL SETUP
   model = rf_lw50(40, pretrained=False, groupnorm=groupnorm)
   # Load pretrained weights
@@ -55,18 +51,96 @@ def run_refinenet(pretrained_model,
     loader = get_incense_loader()
     train_exp = loader.find_by_id(pretrained_model)
     train_exp.artifacts['refinenet_scannet_best.pth'].save(TMPDIR)
-    checkpoint = torch.load(os.path.join(TMPDIR, f'{pretrained_model}_refinenet_scannet_best.pth'))
+    checkpoint = torch.load(
+        os.path.join(TMPDIR, f'{pretrained_model}_refinenet_scannet_best.pth'))
     load_checkpoint(model, checkpoint, strict=True)
-    pretrained_model = str(pretrained_model)
+  else:
+    assert False
+  return model
+
+
+@ex.command
+def run_knn(fitting_experiment, subset, device='cuda', groupnorm=False, ef=100,
+    feature_name='mflow_conv_g4_pool'):
+  data = tfds.load(f'scan_net/{subset}', split='train')
+
+  # MODEL SETUP
+  loader = get_incense_loader()
+  fitting_exp = loader.find_by_id(fitting_experiment)
+  model = get_model(fitting_exp.config.pretrained_model, groupnorm=groupnorm)
+  fitting_exp.artifacts['knn.pkl'].save(TMPDIR)
+  with open(os.path.join(TMPDIR, 'knn.pkl'), 'rb') as f:
+    knn = pickle.load(f)
+  knn.set_ef(ef)
+  pretrained_model = str(fitting_exp.config.pretrained_model)
+  model.to(device)
+  model.eval()
+  # Create hook to get features from intermediate pytorch layer
+  hooks = {}
+
+  def get_activation(name, features=hooks):
+
+    def hook(model, input, output):
+      features['feat'] = output.detach()
+
+    return hook
+
+  # get feature layer
+  #feature_name = "mflow_conv_g3_b3_joint_varout_dimred"
+  feature_layer = getattr(model, feature_name)
+  # register hook to get features
+  feature_layer.register_forward_hook(get_activation(feature_name))
+
+
+  # make sure the directory exists
+  directory = os.path.join(EXP_OUT, 'scannet_inference', subset,
+                           pretrained_model)
+  os.makedirs(directory, exist_ok=True)
+
+  for blob in tqdm(data):
+    image = convert_img_to_float(blob['image'])
+    # move channel from last to 2nd
+    image = tf.transpose(image, perm=[2, 0, 1])[tf.newaxis]
+    image = torch.from_numpy(image.numpy())
+
+    label = tf.cast(blob['labels'], tf.int64)
+    # the output is 4 times smaller than the input, so transform labels
+    label = tf.image.resize(label[..., tf.newaxis], (120, 160),
+                            method='nearest')[..., 0].numpy()
+
+    # run inference
+    out = model(image.to(device))
+    features = hooks['feat']
+    features = features.to('cpu').detach().numpy().transpose([0, 2, 3, 1])    
+    assert features.shape[-1] == 256
+    feature_shape = features.shape
+
+    # query knn
+    _, distances = knn.knn_query(features.reshape([-1, 256]), k=1)
+    distances = distances.reshape(feature_shape[1:3])
+    distances = cv2.resize(distances, (160, 120), interpolation=cv2.INTER_LINEAR)
+
+    # store outputs
+    name = blob['name'].numpy().decode()
+    np.save(os.path.join(directory, f'{name}_knn.npy'), distances)
+
+@ex.command
+def run_refinenet(pretrained_model,
+                  subset,
+                  device='cuda',
+                  groupnorm=False):
+  data = tfds.load(f'scan_net/{subset}', split='train')
+
+  # MODEL SETUP
+  model = get_model(pretrained_model, groupnorm=groupnorm)
+  pretrained_model = str(pretrained_model)
 
   model.to(device)
   model.eval()
 
-  # make sure the directory exists, but is empty
+  # make sure the directory exists
   directory = os.path.join(EXP_OUT, 'scannet_inference', subset,
                            pretrained_model)
-  os.makedirs(directory, exist_ok=True)
-  shutil.rmtree(directory)
   os.makedirs(directory, exist_ok=True)
 
   cm = torchmetrics.ConfusionMatrix(num_classes=40, compute_on_step=False)
@@ -139,7 +213,9 @@ def run_density_refinenet(pretrained_model,
     loader = get_incense_loader()
     train_exp = loader.find_by_id(pretrained_model)
     train_exp.artifacts['refinenet_scannet_density.pth'].save(TMPDIR)
-    checkpoint = torch.load(os.path.join(TMPDIR, f'{pretrained_model}_refinenet_scannet_density.pth'))
+    checkpoint = torch.load(
+        os.path.join(TMPDIR,
+                     f'{pretrained_model}_refinenet_scannet_density.pth'))
     load_checkpoint(model, checkpoint, strict=False)
     pretrained_model = str(pretrained_model)
 

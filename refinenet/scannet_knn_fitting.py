@@ -48,6 +48,7 @@ def fit(_run,
         groupnorm=False,
         metric='cosine',
         batchsize=6,
+        subsample=20,
         device='cuda',
         feature_name='mflow_conv_g4_pool',
         pretrained_model='adelaine'):
@@ -68,15 +69,10 @@ def fit(_run,
 
   traindata = TFDataIterableDataset(
       traindata.cache().prefetch(10000).map(augmentation).map(data_converter))
-  valdata = TFDataIterableDataset(valdata.map(data_converter))
   train_loader = torch.utils.data.DataLoader(dataset=traindata,
                                              batch_size=batchsize,
                                              pin_memory=True,
                                              drop_last=True)
-  val_loader = torch.utils.data.DataLoader(dataset=valdata,
-                                           batch_size=batchsize,
-                                           pin_memory=True,
-                                           drop_last=True)
 
   # MODEL SETUP
   if size == 50:
@@ -136,10 +132,10 @@ def fit(_run,
       if c == 255:
         continue
       class_features = features[labels == c]
-      if class_features.shape[0] > 20:
+      if class_features.shape[0] > subsample:
         # subsampling (because storing all these embeddings would be too much)
         class_features = class_features[np.random.choice(class_features.shape[0],
-                                                        size=[20],
+                                                        size=[subsample],
                                                         replace=False)]
       all_features.append(class_features)
     del out, labels, images, features, class_features
@@ -149,12 +145,10 @@ def fit(_run,
   # set up NN index
   knn = hnswlib.Index(space=metric, dim=256)
   knn.init_index(max_elements=all_features.shape[0],
-                 M=48,
+                 M=64,
                  ef_construction=200,
                  random_seed=100)
   knn.add_items(all_features)
-  # lower ef for queries
-  knn.set_ef(50)
   save_path = os.path.join(TMPDIR, 'knn.pkl')
   with open(save_path, 'wb') as f:
     pickle.dump(knn, f)
