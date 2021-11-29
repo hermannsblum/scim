@@ -5,6 +5,7 @@ import tensorflow as tf
 import numpy as np
 import pickle
 from tqdm import tqdm
+import cv2
 
 tf.config.set_visible_devices([], 'GPU')
 import os
@@ -127,6 +128,9 @@ def fit(_run,
     features = hooks['feat']
     features = features.to('cpu').detach().numpy().transpose([0, 2, 3, 1])
     assert features.shape[-1] == 256
+    # interpolate labels to feature size
+    labels = cv2.resize(labels, (features.shape[2], features.shape[1]),
+                        interpolation=cv2.INTER_NEAREST)
     for c in np.unique(labels):
       # subsample for each class separately to have a better balance
       if c == 255:
@@ -134,9 +138,8 @@ def fit(_run,
       class_features = features[labels == c]
       if class_features.shape[0] > subsample:
         # subsampling (because storing all these embeddings would be too much)
-        class_features = class_features[np.random.choice(class_features.shape[0],
-                                                        size=[subsample],
-                                                        replace=False)]
+        class_features = class_features[np.random.choice(
+            class_features.shape[0], size=[subsample], replace=False)]
       all_features.append(class_features)
     del out, labels, images, features, class_features
   all_features = np.concatenate(all_features, axis=0)
@@ -153,7 +156,6 @@ def fit(_run,
   with open(save_path, 'wb') as f:
     pickle.dump(knn, f)
   _run.add_artifact(save_path)
-
 
 
 if __name__ == '__main__':
