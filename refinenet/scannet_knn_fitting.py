@@ -1,5 +1,6 @@
 from sacred import Experiment
 import torch
+import torchvision
 import tensorflow_datasets as tfds
 import tensorflow as tf
 import numpy as np
@@ -123,14 +124,16 @@ def fit(_run,
   all_features = []
   for images, labels in tqdm(train_loader):
     images = images.to(device)
-    labels = labels.to('cpu').detach().numpy()
+    labels = labels.to('cpu').detach()
     out = model(images)
     features = hooks['feat']
     features = features.to('cpu').detach().numpy().transpose([0, 2, 3, 1])
     assert features.shape[-1] == 256
     # interpolate labels to feature size
-    labels = cv2.resize(labels, (features.shape[2], features.shape[1]),
-                        interpolation=cv2.INTER_NEAREST)
+    transform = torchvision.transforms.Resize(
+        (features.shape[1], features.shape[2]),
+        interpolation=torchvision.transforms.InterpolationMode.NEAREST)
+    labels = transform(labels)
     for c in np.unique(labels):
       # subsample for each class separately to have a better balance
       if c == 255:
