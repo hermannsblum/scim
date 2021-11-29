@@ -1,6 +1,7 @@
 from sacred import Experiment
 import torch
 import torchvision
+import PIL
 import tensorflow_datasets as tfds
 import tensorflow as tf
 import numpy as np
@@ -130,10 +131,10 @@ def fit(_run,
     features = features.to('cpu').detach().numpy().transpose([0, 2, 3, 1])
     assert features.shape[-1] == 256
     # interpolate labels to feature size
-    transform = torchvision.transforms.Resize(
-        (features.shape[1], features.shape[2]),
-        interpolation=torchvision.transforms.InterpolationMode.NEAREST)
-    labels = transform(labels)
+    labels = torchvision.transforms.functional.resize(
+        labels,
+        size=(features.shape[1], features.shape[2]),
+        interpolation=PIL.Image.NEAREST)
     for c in np.unique(labels):
       # subsample for each class separately to have a better balance
       if c == 255:
