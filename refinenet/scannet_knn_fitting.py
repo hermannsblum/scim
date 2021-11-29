@@ -123,7 +123,7 @@ def fit(_run,
   all_features = []
   for images, labels in tqdm(train_loader):
     images = images.to(device)
-    labels = labels.to('cpu').detach()
+    labels = labels.to('cpu').detach().numpy()
     out = model(images)
     features = hooks['feat']
     features = features.to('cpu').detach().numpy().transpose([0, 2, 3, 1])
