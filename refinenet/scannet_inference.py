@@ -60,8 +60,13 @@ def get_model(pretrained_model, groupnorm):
 
 
 @ex.command
-def run_knn(fitting_experiment, subset, device='cuda', groupnorm=False, ef=100,
-    feature_name='mflow_conv_g4_pool'):
+def run_knn(fitting_experiment,
+            subset,
+            device='cuda',
+            groupnorm=False,
+            ef=100,
+            k=1,
+            feature_name='mflow_conv_g4_pool'):
   data = tfds.load(f'scan_net/{subset}', split='train')
 
   # MODEL SETUP
@@ -69,7 +74,7 @@ def run_knn(fitting_experiment, subset, device='cuda', groupnorm=False, ef=100,
   fitting_exp = loader.find_by_id(fitting_experiment)
   model = get_model(fitting_exp.config.pretrained_model, groupnorm=groupnorm)
   fitting_exp.artifacts['knn.pkl'].save(TMPDIR)
-  with open(os.path.join(TMPDIR, 'knn.pkl'), 'rb') as f:
+  with open(os.path.join(TMPDIR, f'{fitting_experiment}_knn.pkl'), 'rb') as f:
     knn = pickle.load(f)
   knn.set_ef(ef)
   pretrained_model = str(fitting_exp.config.pretrained_model)
@@ -91,7 +96,6 @@ def run_knn(fitting_experiment, subset, device='cuda', groupnorm=False, ef=100,
   # register hook to get features
   feature_layer.register_forward_hook(get_activation(feature_name))
 
-
   # make sure the directory exists
   directory = os.path.join(EXP_OUT, 'scannet_inference', subset,
                            pretrained_model)
@@ -111,24 +115,27 @@ def run_knn(fitting_experiment, subset, device='cuda', groupnorm=False, ef=100,
     # run inference
     out = model(image.to(device))
     features = hooks['feat']
-    features = features.to('cpu').detach().numpy().transpose([0, 2, 3, 1])    
+    features = features.to('cpu').detach().numpy().transpose([0, 2, 3, 1])
     assert features.shape[-1] == 256
     feature_shape = features.shape
 
     # query knn
-    _, distances = knn.knn_query(features.reshape([-1, 256]), k=1)
+    _, distances = knn.knn_query(features.reshape([-1, 256]), k=k)
+    if k > 1:
+      distances = distances.mean(1)
     distances = distances.reshape(feature_shape[1:3])
-    distances = cv2.resize(distances, (160, 120), interpolation=cv2.INTER_LINEAR)
+    if feature_shape[1] != 120 or feature_shape[2] != 160:
+      distances = cv2.resize(distances, (160, 120),
+                            interpolation=cv2.INTER_LINEAR)
 
     # store outputs
     name = blob['name'].numpy().decode()
-    np.save(os.path.join(directory, f'{name}_knn.npy'), distances)
+    np.save(os.path.join(directory, f'{name}_{k}nn_{fitting_experiment}.npy'),
+            distances)
+
 
 @ex.command
-def run_refinenet(pretrained_model,
-                  subset,
-                  device='cuda',
-                  groupnorm=False):
+def run_refinenet(pretrained_model, subset, device='cuda', groupnorm=False):
   data = tfds.load(f'scan_net/{subset}', split='train')
 
   # MODEL SETUP
