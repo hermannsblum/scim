@@ -72,7 +72,7 @@ def fit(_run,
                             method='nearest')[..., 0]
     return image, label
 
-  traindata = traindata.map(data_converter).take(10)
+  traindata = traindata.map(data_converter)
   if datacache:
     traindata = traindata.cache().prefetch(10000)
   traindata = TFDataIterableDataset(traindata)
