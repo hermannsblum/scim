@@ -72,7 +72,7 @@ def fit(_run,
                             method='nearest')[..., 0]
     return image, label
 
-  traindata = traindata.map(data_converter)
+  traindata = traindata.map(data_converter).take(10)
   if datacache:
     traindata = traindata.cache().prefetch(10000)
   traindata = TFDataIterableDataset(traindata)
@@ -114,12 +114,12 @@ def fit(_run,
 
   for images, labels in tqdm(train_loader):
     images = images.to(device)
-    labels = labels.detach()
-    out = model(images).permute([0, 2, 3, 1]).detach()
-    for c in np.unique(labels):
+    labels = labels.detach().to('cpu')
+    out = model(images).permute([0, 2, 3, 1]).detach().to('cpu')
+    for c in torch.unique(labels).numpy():
       if c == 255:
         continue
-      class_logits = out[labels == c].to('cpu')
+      class_logits = out[labels == c]
       means[c].update(class_logits)
       del class_logits
     del out, labels, images
@@ -130,13 +130,13 @@ def fit(_run,
   vars = {c: torchmetrics.MeanMetric(compute_on_step=False) for c in range(40)}
   for images, labels in tqdm(train_loader):
     images = images.to(device)
-    labels = labels.detach()
+    labels = labels.detach().to('cpu')
     out = model(images).permute([0, 2, 3, 1]).detach()
-    mse = torch.square(out - computed_means)
-    for c in np.unique(labels):
+    mse = torch.square(out - computed_means).to('cpu')
+    for c in torch.unique(labels).numpy():
       if c == 255:
         continue
-      class_mse = mse[labels == c].to('cpu')
+      class_mse = mse[labels == c]
       vars[c].update(class_mse)
       del class_mse
     del out, labels, images, mse
