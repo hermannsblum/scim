@@ -106,6 +106,9 @@ def fit(_run,
     load_checkpoint(model, checkpoint, strict=True)
     pretrained_model = str(pretrained_model)
   model.to(device)
+  if torch.cuda.device_count() > 1:
+    model = torch.nn.DataParallel(
+        model, device_ids=[*range(torch.cuda.device_count())])
   model.eval()
 
   means = {c: torchmetrics.MeanMetric(compute_on_step=False) for c in range(40)}
@@ -114,12 +117,12 @@ def fit(_run,
 
   for images, labels in tqdm(train_loader):
     images = images.to(device)
-    labels = labels.detach().to('cpu')
-    out = model(images).permute([0, 2, 3, 1]).detach().to('cpu')
+    labels = labels.detach()
+    out = model(images).permute([0, 2, 3, 1]).detach()
     for c in torch.unique(labels).numpy():
       if c == 255:
         continue
-      class_logits = out[labels == c]
+      class_logits = out[labels == c].to('cpu')
       means[c].update(class_logits)
       del class_logits
     del out, labels, images
@@ -130,13 +133,13 @@ def fit(_run,
   vars = {c: torchmetrics.MeanMetric(compute_on_step=False) for c in range(40)}
   for images, labels in tqdm(train_loader):
     images = images.to(device)
-    labels = labels.detach().to('cpu')
+    labels = labels.detach()
     out = model(images).permute([0, 2, 3, 1]).detach()
-    mse = torch.square(out - computed_means).to('cpu')
-    for c in torch.unique(labels).numpy():
+    mse = torch.square(out - computed_means)
+    for c in np.unique(labels):
       if c == 255:
         continue
-      class_mse = mse[labels == c]
+      class_mse = mse[labels == c].to('cpu')
       vars[c].update(class_mse)
       del class_mse
     del out, labels, images, mse
