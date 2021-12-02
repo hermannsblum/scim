@@ -1,6 +1,8 @@
 from sacred import Experiment
 import os
+import torch
 import numpy as np
+import torchmetrics
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
@@ -9,6 +11,38 @@ from semseg_density.settings import TMPDIR, EXP_OUT
 from semseg_density.data.nyu_depth_v2 import TRAINING_LABEL_NAMES
 
 ex = Experiment()
+
+
+@ex.command
+def measure(path, out_classes=['pilow', 'refridgerator', 'television']):
+  directory = os.path.join(EXP_OUT, path)
+  frames = [x[:-10] for x in os.listdir(directory) if x.endswith('label.npy')]
+  methods = set(
+      filename.split(frames[0])[-1].split('.')[0][1:]
+      for filename in os.listdir(directory)
+      if filename.startswith(frames[0]))
+  methods.pop('label')
+  print(methods)
+  method_ap = {
+      m: torchmetrics.AveragePrecision(compute_on_step=False) for m in methods
+  }
+
+  # map labels to in-domain (0) or out-domain (1)
+  ood_map = 255 * np.ones(256, dtype='uint8')
+  ood_map[:40] = 0
+  for c in range(40):
+    if TRAINING_LABEL_NAMES[c] in out_classes:
+      ood_map[c] = 1
+
+  for frame in tqdm(frames):
+    label = np.load(os.path.join(directory, f'{frame}_label.npy'))
+    ood = ood_map[label].squeeze()
+    for method in methods:
+      val = np.load(os.path.join(directory, f'{frame}_{method}.npy')).squeeze()
+      method_ap[method].update(torch.from_numpy(val), torch.from_numpy(ood))
+
+  for method in methods:
+    print(f'{method}: {method_ap[method].compute() * 100:.2f}% AP')
 
 
 @ex.main
