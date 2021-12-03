@@ -71,7 +71,7 @@ def fit(_run,
     return image, label
 
   traindata = TFDataIterableDataset(
-      traindata.cache().prefetch(10000).map(augmentation).map(data_converter))
+      traindata.cache().prefetch(10000).map(data_converter))
   train_loader = torch.utils.data.DataLoader(dataset=traindata,
                                              batch_size=batchsize,
                                              pin_memory=True,
