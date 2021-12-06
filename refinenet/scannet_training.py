@@ -72,9 +72,7 @@ def train(_run,
     image = convert_img_to_float(image)
     label = tf.cast(label, tf.int64)
     if ignore_other:
-      label[label == 37] = 255
-      label[label == 38] = 255
-      label[label == 39] = 255
+      label = tf.where(label >= 37, tf.cast(255, tf.int64), label)
     # the output is 4 times smaller than the input, so transform labels
     label = tf.image.resize(label[..., tf.newaxis], (120, 160),
                             method='nearest')[..., 0]
