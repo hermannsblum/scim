@@ -60,6 +60,7 @@ def train(_run,
           encoder_lr=5e-4,
           decoder_lr=5e-3,
           groupnorm=False,
+          ignore_other=False,
           subset='25k',
           device='cuda'):
   # DATA LOADING
@@ -70,6 +71,10 @@ def train(_run,
   def data_converter(image, label):
     image = convert_img_to_float(image)
     label = tf.cast(label, tf.int64)
+    if ignore_other:
+      label[label == 37] = 255
+      label[label == 38] = 255
+      label[label == 39] = 255
     # the output is 4 times smaller than the input, so transform labels
     label = tf.image.resize(label[..., tf.newaxis], (120, 160),
                             method='nearest')[..., 0]
