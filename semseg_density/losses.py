@@ -11,6 +11,7 @@ __all__ = ['MixSoftmaxCrossEntropyLoss', 'MixSoftmaxCrossEntropyOHEMLoss']
 class MaxLogitLoss(nn.Module):
 
   def __init__(self, alpha, ignore_index):
+    super(MaxLogitLoss, self).__init__()
     self.ignore_index = ignore_index
     self.alpha = alpha
     self.ce = nn.CrossEntropyLoss(ignore_index=ignore_index)

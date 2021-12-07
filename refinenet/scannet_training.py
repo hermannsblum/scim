@@ -180,7 +180,8 @@ def train_logit(_run,
     _run.log_scalar('loss', loss.item(), epoch)
     _run.log_scalar('encoder_lr', current_encoder_lr, epoch)
     _run.log_scalar('decoder_lr', current_decoder_lr, epoch)
-    validation(epoch, best_pred)
+    with torch.no_grad():
+      validation(epoch, best_pred)
     if epoch % 5 == 0:
       save_checkpoint(model, postfix=f'{epoch}epochs')
       _run.add_artifact(
@@ -322,7 +323,8 @@ def train(_run,
     _run.log_scalar('loss', loss.item(), epoch)
     _run.log_scalar('encoder_lr', current_encoder_lr, epoch)
     _run.log_scalar('decoder_lr', current_decoder_lr, epoch)
-    validation(epoch, best_pred)
+    with torch.no_grad():
+      validation(epoch, best_pred)
     if epoch % 5 == 0:
       save_checkpoint(model, postfix=f'{epoch}epochs')
       _run.add_artifact(
