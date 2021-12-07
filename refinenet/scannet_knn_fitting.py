@@ -54,6 +54,7 @@ def fit(_run,
         subsample=20,
         device='cuda',
         feature_name='mflow_conv_g4_pool',
+        ignore_other=False,
         pretrained_model='adelaine'):
   # DATA LOADING
   data = tfds.load(f'scan_net/{subset}', split='train', as_supervised=True)
@@ -63,6 +64,8 @@ def fit(_run,
   def data_converter(image, label):
     image = convert_img_to_float(image)
     label = tf.cast(label, tf.int64)
+    if ignore_other:
+      label = tf.where(label >= 37, tf.cast(255, tf.int64), label)
     # move channel from last to 2nd
     image = tf.transpose(image, perm=[2, 0, 1])
     # the output is 4 times smaller than the input, so transform labels
