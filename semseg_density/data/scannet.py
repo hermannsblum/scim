@@ -76,11 +76,9 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
       ScanNetConfig(
           name='no-lamp',
           scene='25k',
-          description=
-          'Only contains images without lamps.',
+          description='Only contains images without lamps.',
           classes=[
-              i for i in range(40)
-              if not TRAINING_LABEL_NAMES[i] in ('lamp')
+              i for i in range(40) if not TRAINING_LABEL_NAMES[i] in ('lamp')
           ]),
   ]
 
@@ -91,6 +89,9 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
         'name': tf.string,
         'labels': tfds.features.Tensor(shape=(480, 640), dtype=tf.uint8),
     }
+    if self.builder_config.scene == '0to9':
+      features['instances'] = tfds.features.Tensor(shape=(480, 640),
+                                                   dtype=tf.uint8)
     return tfds.core.DatasetInfo(
         builder=self,
         description=_DESCRIPTION,
@@ -111,7 +112,7 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
         'full':
             'https://drive.google.com/uc?export=download&id=1E6D0pLqxUHDZCMoStNXlYOHfMekebdEr',
         '0to9':
-            'https://drive.google.com/uc?export=download&id=1BM1FSe76bid98iiB-Nu8njcNe0ZukIXU',
+            'https://drive.google.com/uc?export=download&id=1rI6t0DYQMENS3dS2PTxulvSKa39Tf1Hq',
     }
 
     if self.builder_config.scene == '25k':
@@ -130,9 +131,7 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
       return [
           tfds.core.SplitGenerator(
               name=tfds.Split.TRAIN,
-              gen_kwargs={
-                  'data_path': os.path.join(extracted, 'scannet', 'scans')
-              },
+              gen_kwargs={'data_path': os.path.join(extracted, '0to9')},
           ),
       ]
     extracted = dl_manager.download_and_extract(urls['full'])
@@ -157,21 +156,20 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
             subsampler % self.builder_config.subsampling != 0):
           continue
         index = int(file_name.split('.')[0])
-        if os.path.exists(os.path.join(data_path, scene_dir, 'label')):
+        if os.path.exists(os.path.join(data_path, scene_dir, 'label-filt')):
+          raw_labels = cv2.imread(
+              os.path.join(data_path, scene_dir, 'label-filt', f'{index}.png'),
+              cv2.IMREAD_ANYDEPTH)
+          # apply mapping
+          labels = SCANNET_TO_NYU40[raw_labels]
+        else:
+          assert os.path.exists(os.path.join(data_path, scene_dir, 'label'))
           labels = cv2.imread(
               os.path.join(data_path, scene_dir, 'label', f'{index:06d}.png'),
               cv2.IMREAD_ANYDEPTH)
           # labels are alrady mapped to NYU, but not our format
           labels[labels == 0] = 256
           labels = (labels - 1).astype('uint8')
-        else:
-          assert os.path.exists(os.path.join(data_path, scene_dir,
-                                             'label-filt'))
-          raw_labels = cv2.imread(
-              os.path.join(data_path, scene_dir, 'label-filt', f'{index}.png'),
-              cv2.IMREAD_ANYDEPTH)
-          # apply mapping
-          labels = SCANNET_TO_NYU40[raw_labels]
         contained_labels = np.unique(labels)
         # check that image only contains allowed labels
         valid = True
@@ -187,6 +185,17 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
         # reshape to common size
         labels = resize_with_crop(np.expand_dims(labels, -1), (480, 640),
                                   method='nearest').numpy()[..., 0]
+
+        if 'instances' in self.info.features:
+          assert os.path.exists(
+              os.path.join(data_path, scene_dir, 'instance-filt'))
+          instances = cv2.imread(
+              os.path.join(data_path, scene_dir, 'instance-filt',
+                           f'{index}.png'), cv2.IMREAD_ANYDEPTH)
+          # reshape to common size
+          instances = resize_with_crop(np.expand_dims(instances, -1), (480, 640),
+                                    method='nearest').numpy()[..., 0]
+
         image = cv2.imread(
             os.path.join(data_path, scene_dir, 'color', file_name))[..., ::-1]
         image = resize_with_crop(image, (480, 640)).numpy().astype('uint8')
@@ -195,12 +204,15 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
         scenenum = int(scene_dir.split('_')[0][5:])
         trajectorynum = int(scene_dir.split('_')[1])
         key = scenenum * 100000 + trajectorynum * 10000 + index
-        yield key, {
+        features = {
             'image': image,
             'labels': labels,
             'scene': scene_dir,
             'name': f'{scene_dir}_{index:06d}',
         }
+        if 'instances' in self.info.features:
+          features['instances'] = instances
+        yield key, features
 
 
 SCANNET_TO_NYU40 = np.array([

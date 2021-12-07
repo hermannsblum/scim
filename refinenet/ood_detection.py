@@ -24,6 +24,7 @@ def measure(path, out_classes=['pilow', 'refridgerator', 'television']):
           for filename in os.listdir(directory)
           if filename.startswith(frames[0])))
   methods.remove('label')
+  methods.remove('instances')
   method_ap = {
       m: torchmetrics.AveragePrecision(compute_on_step=False) for m in methods
   }
@@ -56,6 +57,61 @@ def measure(path, out_classes=['pilow', 'refridgerator', 'television']):
 
   measurements = {}
   for method in method_ap:
+    measurements[method] = {
+        'AP': float(method_ap[method].compute().numpy()),
+        'AUROC': float(method_auroc[method].compute().numpy())
+    }
+  with pd.option_context('display.float_format', '{:0.4f}'.format):
+    print(pd.DataFrame.from_dict(measurements).T)
+
+
+@ex.command
+def measure_instances(path, out_classes=['pilow', 'refridgerator', 'television']):
+  directory = os.path.join(EXP_OUT, path)
+  frames = [x[:-10] for x in os.listdir(directory) if x.endswith('label.npy')]
+  methods = list(
+      set(
+          filename.split(frames[0])[-1].split('.')[0][1:]
+          for filename in os.listdir(directory)
+          if filename.startswith(frames[0])))
+  methods.remove('label')
+  methods.remove('instances')
+  method_ap = {
+      m: torchmetrics.AveragePrecision(compute_on_step=False) for m in methods
+  }
+  method_ap['gt'] = torchmetrics.AveragePrecision(compute_on_step=False)
+  method_auroc = {m: torchmetrics.AUROC(compute_on_step=False) for m in methods}
+  method_auroc['gt'] = torchmetrics.AUROC(compute_on_step=False)
+
+  # map labels to in-domain (0) or out-domain (1)
+  ood_map = 255 * np.ones(256, dtype='uint8')
+  ood_map[:40] = 0
+  for c in range(40):
+    if TRAINING_LABEL_NAMES[c] in out_classes:
+      ood_map[c] = 1
+
+  for frame in tqdm(frames):
+    label = np.load(os.path.join(directory, f'{frame}_label.npy'))
+    instances = np.load(os.path.join(directory, f'{frame}_instances.npy'))
+    ood = ood_map[label].squeeze()
+    if np.sum(ood < 2) == 0:
+      continue
+    for method in methods:
+      val = -np.load(os.path.join(directory, f'{frame}_{method}.npy')).squeeze()
+      for inst in np.unique(instances):
+        val[instances == inst] = np.mean(val[instances == inst])
+      method_ap[method].update(torch.from_numpy(-val[ood < 2]),
+                               torch.from_numpy(ood[ood < 2]))
+      method_auroc[method].update(torch.from_numpy(-val[ood < 2]),
+                                  torch.from_numpy(ood[ood < 2]))
+    method_ap['gt'].update(torch.from_numpy(ood[ood < 2].astype(float)),
+                           torch.from_numpy(ood[ood < 2]))
+    method_auroc['gt'].update(torch.from_numpy(ood[ood < 2].astype(float)),
+                              torch.from_numpy(ood[ood < 2]))
+
+  measurements = {}
+  for method in method_ap:
+    #print(f'Processing {method}...')
     measurements[method] = {
         'AP': float(method_ap[method].compute().numpy()),
         'AUROC': float(method_auroc[method].compute().numpy())

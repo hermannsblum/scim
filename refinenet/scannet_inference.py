@@ -177,6 +177,13 @@ def run_refinenet(pretrained_model,
             -max_logit[0].detach().to('cpu').numpy())
     np.save(os.path.join(directory, f'{name}_label.npy'), label)
 
+    if 'instances' in blob:
+      instances = tf.cast(blob['instances'], tf.int64)
+      # the output is 4 times smaller than the input, so transform labels
+      instances = tf.image.resize(instances[..., tf.newaxis], (120, 160),
+                              method='nearest')[..., 0].numpy()
+      np.save(os.path.join(directory, f'{name}_instances.npy'), instances)
+
   cm = cm.compute().numpy()
   np.save(os.path.join(directory, 'confusion_matrix.npy'), cm)
   disp = ConfusionMatrixDisplay(cm / cm.sum(0),
