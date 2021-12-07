@@ -1,5 +1,6 @@
 from sacred import Experiment
 import os
+import pandas as pd
 import torch
 import numpy as np
 import torchmetrics
@@ -40,19 +41,27 @@ def measure(path, out_classes=['pilow', 'refridgerator', 'television']):
   for frame in tqdm(frames):
     label = np.load(os.path.join(directory, f'{frame}_label.npy'))
     ood = ood_map[label].squeeze()
+    if np.sum(ood < 2) == 0:
+      continue
     for method in methods:
-      val = np.load(os.path.join(directory, f'{frame}_{method}.npy')).squeeze()
+      val = -np.load(os.path.join(directory, f'{frame}_{method}.npy')).squeeze()
       method_ap[method].update(torch.from_numpy(-val[ood < 2]),
                                torch.from_numpy(ood[ood < 2]))
       method_auroc[method].update(torch.from_numpy(-val[ood < 2]),
                                   torch.from_numpy(ood[ood < 2]))
-    method_ap['gt'].update(torch.from_numpy(ood[ood < 2]),
+    method_ap['gt'].update(torch.from_numpy(ood[ood < 2].astype(float)),
                            torch.from_numpy(ood[ood < 2]))
-    method_auroc['gt'].update(torch.from_numpy(ood[ood < 2]),
+    method_auroc['gt'].update(torch.from_numpy(ood[ood < 2].astype(float)),
                               torch.from_numpy(ood[ood < 2]))
 
+  measurements = {}
   for method in method_ap:
-    print(f'{method}: {method_ap[method].compute() * 100:.2f}% AP')
+    measurements[method] = {
+        'AP': float(method_ap[method].compute().numpy()),
+        'AUROC': float(method_auroc[method].compute().numpy())
+    }
+  with pd.option_context('display.float_format', '{:0.4f}'.format):
+    print(pd.DataFrame.from_dict(measurements).T)
 
 
 @ex.command
