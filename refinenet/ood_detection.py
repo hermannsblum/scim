@@ -17,15 +17,18 @@ ex = Experiment()
 def measure(path, out_classes=['pilow', 'refridgerator', 'television']):
   directory = os.path.join(EXP_OUT, path)
   frames = [x[:-10] for x in os.listdir(directory) if x.endswith('label.npy')]
-  methods = set(
-      filename.split(frames[0])[-1].split('.')[0][1:]
-      for filename in os.listdir(directory)
-      if filename.startswith(frames[0]))
-  methods.pop('label')
-  print(methods)
+  methods = list(
+      set(
+          filename.split(frames[0])[-1].split('.')[0][1:]
+          for filename in os.listdir(directory)
+          if filename.startswith(frames[0])))
+  methods.remove('label')
   method_ap = {
       m: torchmetrics.AveragePrecision(compute_on_step=False) for m in methods
   }
+  method_ap['gt'] = torchmetrics.AveragePrecision(compute_on_step=False)
+  method_auroc = {m: torchmetrics.AUROC(compute_on_step=False) for m in methods}
+  method_auroc['gt'] = torchmetrics.AUROC(compute_on_step=False)
 
   # map labels to in-domain (0) or out-domain (1)
   ood_map = 255 * np.ones(256, dtype='uint8')
@@ -39,10 +42,131 @@ def measure(path, out_classes=['pilow', 'refridgerator', 'television']):
     ood = ood_map[label].squeeze()
     for method in methods:
       val = np.load(os.path.join(directory, f'{frame}_{method}.npy')).squeeze()
-      method_ap[method].update(torch.from_numpy(val), torch.from_numpy(ood))
+      method_ap[method].update(torch.from_numpy(-val[ood < 2]),
+                               torch.from_numpy(ood[ood < 2]))
+      method_auroc[method].update(torch.from_numpy(-val[ood < 2]),
+                                  torch.from_numpy(ood[ood < 2]))
+    method_ap['gt'].update(torch.from_numpy(ood[ood < 2]),
+                           torch.from_numpy(ood[ood < 2]))
+    method_auroc['gt'].update(torch.from_numpy(ood[ood < 2]),
+                              torch.from_numpy(ood[ood < 2]))
 
-  for method in methods:
+  for method in method_ap:
     print(f'{method}: {method_ap[method].compute() * 100:.2f}% AP')
+
+
+@ex.command
+def hist3d(path,
+           a,
+           b,
+           out_classes=['pilow', 'refridgerator', 'television'],
+           nbins=50):
+  directory = os.path.join(EXP_OUT, path)
+  frames = [x[:-10] for x in os.listdir(directory) if x.endswith('label.npy')]
+  # map labels to in-domain (0) or out-domain (1)
+  ood_map = 255 * np.ones(256, dtype='uint8')
+  ood_map[:40] = 0
+  for c in range(40):
+    if TRAINING_LABEL_NAMES[c] in out_classes:
+      ood_map[c] = 1
+
+  a_max = 0.0
+  a_min = 0.0
+  b_max = 0.0
+  b_min = 0.0
+  # first compute max and min
+  for frame in tqdm(frames):
+    val = np.load(os.path.join(directory, f'{frame}_{a}.npy')).squeeze()
+    a_max = np.maximum(a_max, val.max())
+    a_min = np.minimum(a_min, val.min())
+    val = np.load(os.path.join(directory, f'{frame}_{b}.npy')).squeeze()
+    b_max = np.maximum(b_max, val.max())
+    b_min = np.minimum(b_min, val.min())
+
+  # now compute histograms
+  a_edges = np.linspace(a_min, a_max, nbins + 1)
+  b_edges = np.linspace(b_min, b_max, nbins + 1)
+  id_hist = np.zeros((nbins, nbins))
+  ood_hist = np.zeros((nbins, nbins))
+  for frame in tqdm(frames):
+    label = np.load(os.path.join(directory, f'{frame}_label.npy'))
+    ood = ood_map[label].squeeze()
+    a_val = np.load(os.path.join(directory, f'{frame}_{a}.npy')).squeeze()
+    b_val = np.load(os.path.join(directory, f'{frame}_{b}.npy')).squeeze()
+    id_hist += np.histogram2d(a_val[ood == 0],
+                              b_val[ood == 0],
+                              bins=[a_edges, b_edges])[0]
+    ood_hist += np.histogram2d(a_val[ood == 1],
+                               b_val[ood == 1],
+                               bins=[a_edges, b_edges])[0]
+
+  # normalize
+  id_hist = id_hist / id_hist.sum()
+  ood_hist = ood_hist / ood_hist.sum()
+
+  plt.figure()
+  ax = plt.axes(projection='3d')
+  x, y = np.meshgrid(a_edges[:-1], b_edges[:-1])
+  #ax.plot_wireframe(a_edges[:-1], b_edges[:-1], id_hist, label='inliers')
+  ax.view_init(60, 35)
+  ax.plot_wireframe(x, y, id_hist, label='inliers', colors=(0, 0, 0, 0.5))
+  ax.plot_wireframe(x, y, ood_hist, label='outliers', colors=(1, 0, 0, 0.5))
+  #ax.contour3D(x, y, ood_hist.flatten(), label='outliers')
+  plt.legend()
+  plt.savefig(os.path.join(directory, f'ood_{a}_{b}_hist.pdf'))
+
+
+@ex.command
+def hist(path,
+         method,
+         out_classes=['pilow', 'refridgerator', 'television'],
+         nbins=50):
+  directory = os.path.join(EXP_OUT, path)
+  frames = [x[:-10] for x in os.listdir(directory) if x.endswith('label.npy')]
+  max_val = 0.0
+  min_val = 0.0
+
+  # map labels to in-domain (0) or out-domain (1)
+  ood_map = 255 * np.ones(256, dtype='uint8')
+  ood_map[:40] = 0
+  for c in range(40):
+    if TRAINING_LABEL_NAMES[c] in out_classes:
+      ood_map[c] = 1
+
+  # first compute max and min
+  for frame in tqdm(frames):
+    val = np.load(os.path.join(directory, f'{frame}_{method}.npy')).squeeze()
+    max_val = np.maximum(max_val, val.max())
+    min_val = np.minimum(min_val, val.min())
+
+  # now compute histograms
+  bin_edges = np.linspace(min_val, max_val, nbins + 1)
+  id_hist = np.zeros(nbins)
+  ood_hist = np.zeros(nbins)
+  for frame in tqdm(frames):
+    label = np.load(os.path.join(directory, f'{frame}_label.npy'))
+    ood = ood_map[label].squeeze()
+    val = np.load(os.path.join(directory, f'{frame}_{method}.npy')).squeeze()
+    id_hist += np.histogram(val[ood == 0], bins=bin_edges)[0]
+    ood_hist += np.histogram(val[ood == 1], bins=bin_edges)[0]
+
+  # normalize
+  id_hist = id_hist / id_hist.sum()
+  ood_hist = ood_hist / ood_hist.sum()
+
+  plt.figure()
+  plt.bar(bin_edges[:-1],
+          id_hist,
+          width=(max_val - min_val) / nbins,
+          alpha=.4,
+          label='inliers')
+  plt.bar(bin_edges[:-1],
+          ood_hist,
+          width=(max_val - min_val) / nbins,
+          alpha=.4,
+          label='outliers')
+  plt.legend()
+  plt.savefig(os.path.join(directory, f'ood_{method}_hist.pdf'))
 
 
 @ex.main
