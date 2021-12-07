@@ -161,7 +161,8 @@ def train(_run,
     _run.log_scalar('loss', loss.item(), epoch)
     _run.log_scalar('lr', current_lr, epoch)
     del images, targets, outputs, loss
-    validation(epoch, best_pred)
+    with torch.no_grad():
+      validation(epoch, best_pred)
     if epoch % 5 == 0:
       save_checkpoint(model, postfix=f'{epoch}epochs')
       _run.add_artifact(
