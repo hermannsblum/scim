@@ -33,5 +33,5 @@ class RefineNetSML(torch.nn.Module):
   def forward(self, x):
     logits = self.refinenet(x)
     max_logit, c = torch.max(logits, 1)
-    sml = (max_logit - self.means[c]) / self.sigma[c]
+    sml = -(max_logit - self.means[c]) / self.sigma[c]
     return logits, sml

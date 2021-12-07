@@ -20,8 +20,9 @@ import semseg_density.data.scannet
 from semseg_density.model.refinenet import rf_lw50, rf_lw101
 from semseg_density.gdrive import load_gdrive_file
 from semseg_density.model.refinenet_uncertainty import RefineNetDensity
+from semseg_density.model.refinenet_sml import RefineNetSML
 from semseg_density.settings import TMPDIR, EXP_OUT
-from semseg_density.sacred_utils import get_incense_loader
+from semseg_density.sacred_utils import get_incense_loader, get_checkpoint
 
 ex = Experiment()
 
@@ -40,25 +41,6 @@ def load_checkpoint(model, state_dict, strict=True):
     model.load_state_dict(state_dict, strict=strict)
 
 
-def get_model(pretrained_model, groupnorm):
-  # MODEL SETUP
-  model = rf_lw50(40, pretrained=False, groupnorm=groupnorm)
-  # Load pretrained weights
-  if pretrained_model and isinstance(pretrained_model, str):
-    checkpoint = torch.load(load_gdrive_file(pretrained_model, ending='pth'))
-    load_checkpoint(model, checkpoint, strict=True)
-  elif pretrained_model and isinstance(pretrained_model, int):
-    loader = get_incense_loader()
-    train_exp = loader.find_by_id(pretrained_model)
-    train_exp.artifacts['refinenet_scannet_best.pth'].save(TMPDIR)
-    checkpoint = torch.load(
-        os.path.join(TMPDIR, f'{pretrained_model}_refinenet_scannet_best.pth'))
-    load_checkpoint(model, checkpoint, strict=True)
-  else:
-    assert False
-  return model
-
-
 @ex.command
 def run_knn(fitting_experiment,
             subset,
@@ -72,12 +54,15 @@ def run_knn(fitting_experiment,
   # MODEL SETUP
   loader = get_incense_loader()
   fitting_exp = loader.find_by_id(fitting_experiment)
-  model = get_model(fitting_exp.config.pretrained_model, groupnorm=groupnorm)
+  # MODEL SETUP
+  model = rf_lw50(40, pretrained=False, groupnorm=groupnorm)
+  checkpoint, pretrained_id = get_checkpoint(
+      fitting_exp.config.pretrained_model)
+  load_checkpoint(model, checkpoint)
   fitting_exp.artifacts['knn.pkl'].save(TMPDIR)
   with open(os.path.join(TMPDIR, f'{fitting_experiment}_knn.pkl'), 'rb') as f:
     knn = pickle.load(f)
   knn.set_ef(ef)
-  pretrained_model = str(fitting_exp.config.pretrained_model)
   model.to(device)
   model.eval()
   # Create hook to get features from intermediate pytorch layer
@@ -97,8 +82,7 @@ def run_knn(fitting_experiment,
   feature_layer.register_forward_hook(get_activation(feature_name))
 
   # make sure the directory exists
-  directory = os.path.join(EXP_OUT, 'scannet_inference', subset,
-                           pretrained_model)
+  directory = os.path.join(EXP_OUT, 'scannet_inference', subset, pretrained_id)
   os.makedirs(directory, exist_ok=True)
 
   for blob in tqdm(data):
@@ -126,7 +110,7 @@ def run_knn(fitting_experiment,
     distances = distances.reshape(feature_shape[1:3])
     if feature_shape[1] != 120 or feature_shape[2] != 160:
       distances = cv2.resize(distances, (160, 120),
-                            interpolation=cv2.INTER_LINEAR)
+                             interpolation=cv2.INTER_LINEAR)
 
     # store outputs
     name = blob['name'].numpy().decode()
@@ -135,19 +119,25 @@ def run_knn(fitting_experiment,
 
 
 @ex.command
-def run_refinenet(pretrained_model, subset, device='cuda', groupnorm=False):
+def run_refinenet(pretrained_model,
+                  subset,
+                  device='cuda',
+                  groupnorm=False,
+                  ignore_other=False):
   data = tfds.load(f'scan_net/{subset}', split='train')
 
   # MODEL SETUP
-  model = get_model(pretrained_model, groupnorm=groupnorm)
+  # MODEL SETUP
+  model = rf_lw50(40, pretrained=False, groupnorm=groupnorm)
+  checkpoint, pretrained_id = get_checkpoint(pretrained_model)
+  load_checkpoint(model, checkpoint)
   pretrained_model = str(pretrained_model)
 
   model.to(device)
   model.eval()
 
   # make sure the directory exists
-  directory = os.path.join(EXP_OUT, 'scannet_inference', subset,
-                           pretrained_model)
+  directory = os.path.join(EXP_OUT, 'scannet_inference', subset, pretrained_id)
   os.makedirs(directory, exist_ok=True)
 
   cm = torchmetrics.ConfusionMatrix(num_classes=40, compute_on_step=False)
@@ -162,6 +152,8 @@ def run_refinenet(pretrained_model, subset, device='cuda', groupnorm=False):
     # the output is 4 times smaller than the input, so transform labels
     label = tf.image.resize(label[..., tf.newaxis], (120, 160),
                             method='nearest')[..., 0].numpy()
+    if ignore_other:
+      label[label >= 37] = 255
 
     # run inference
     logits = model(image.to(device))
@@ -182,7 +174,7 @@ def run_refinenet(pretrained_model, subset, device='cuda', groupnorm=False):
     np.save(os.path.join(directory, f'{name}_entropy.npy'),
             softmax_entropy[0].detach().to('cpu').numpy())
     np.save(os.path.join(directory, f'{name}_maxlogit.npy'),
-            max_logit[0].detach().to('cpu').numpy())
+            -max_logit[0].detach().to('cpu').numpy())
     np.save(os.path.join(directory, f'{name}_label.npy'), label)
 
   cm = cm.compute().numpy()
@@ -192,6 +184,55 @@ def run_refinenet(pretrained_model, subset, device='cuda', groupnorm=False):
   plt.figure(figsize=(20, 20))
   disp.plot(ax=plt.gca(), xticks_rotation='vertical', include_values=False)
   plt.savefig(os.path.join(directory, 'confusion_matrix.pdf'))
+
+
+@ex.main
+def run_sml_refinenet(pretrained_model,
+                      subset,
+                      size=50,
+                      device='cuda',
+                      groupnorm=False):
+  data = tfds.load(f'scan_net/{subset}', split='train')
+
+  # MODEL SETUP
+  if not size in [50, 101]:
+    raise UserWarning("Unknown model size.")
+  model = RefineNetSML(
+      40,
+      size=size,
+      groupnorm=groupnorm,
+  )
+  # Load pretrained weights
+  checkpoint, pretrained_id = get_checkpoint(
+      pretrained_model, pthname='refinenet_scannet_sml.pth')
+  load_checkpoint(model, checkpoint)
+  model.to(device)
+  model.eval()
+
+  # make sure the directory exists, but is empty
+  directory = os.path.join(EXP_OUT, 'scannet_inference', subset, pretrained_id)
+  os.makedirs(directory, exist_ok=True)
+  shutil.rmtree(directory)
+  os.makedirs(directory, exist_ok=True)
+
+  for blob in tqdm(data):
+    image = convert_img_to_float(blob['image'])
+    # move channel from last to 2nd
+    image = tf.transpose(image, perm=[2, 0, 1])[tf.newaxis]
+    image = torch.from_numpy(image.numpy())
+
+    label = tf.cast(blob['labels'], tf.int64)
+    # the output is 4 times smaller than the input, so transform labels
+    label = tf.image.resize(label[..., tf.newaxis], (120, 160),
+                            method='nearest')[..., 0].numpy()
+
+    # run inference
+    _, sml = model(image.to(device))
+
+    # store outputs
+    name = blob['name'].numpy().decode()
+    np.save(os.path.join(directory, f'{name}_sml.npy'),
+            sml[0].detach().to('cpu').numpy())
 
 
 @ex.main
@@ -213,25 +254,15 @@ def run_density_refinenet(pretrained_model,
                            groupnorm=groupnorm,
                            feature_layer=feature_layer)
   # Load pretrained weights
-  if pretrained_model and isinstance(pretrained_model, str):
-    checkpoint = torch.load(load_gdrive_file(pretrained_model, ending='pth'))
-    load_checkpoint(model, checkpoint, strict=False)
-  elif pretrained_model and isinstance(pretrained_model, int):
-    loader = get_incense_loader()
-    train_exp = loader.find_by_id(pretrained_model)
-    train_exp.artifacts['refinenet_scannet_density.pth'].save(TMPDIR)
-    checkpoint = torch.load(
-        os.path.join(TMPDIR,
-                     f'{pretrained_model}_refinenet_scannet_density.pth'))
-    load_checkpoint(model, checkpoint, strict=False)
-    pretrained_model = str(pretrained_model)
+  checkpoint, pretrained_id = get_checkpoint(
+      pretrained_model, pthname='refinenet_scannet_density.pth')
+  load_checkpoint(model, checkpoint)
 
   model.to(device)
   model.eval()
 
   # make sure the directory exists, but is empty
-  directory = os.path.join(EXP_OUT, 'scannet_inference', subset,
-                           pretrained_model)
+  directory = os.path.join(EXP_OUT, 'scannet_inference', subset, pretrained_id)
   os.makedirs(directory, exist_ok=True)
   shutil.rmtree(directory)
   os.makedirs(directory, exist_ok=True)

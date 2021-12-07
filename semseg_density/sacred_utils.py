@@ -1,5 +1,7 @@
 from sacred.observers import MongoObserver, FileStorageObserver
 import incense
+import torch
+import os
 import semseg_density.settings as settings
 
 
@@ -30,3 +32,26 @@ def get_incense_loader():
                                     db_name=settings.EXPERIMENT_DB_NAME)
   else:
     raise UserWarning("No loader settings found.")
+
+
+def get_checkpoint(pretrained_model, pthname='refinenet_scannet_best.pth'):
+  # Load pretrained weights
+  if pretrained_model and isinstance(pretrained_model, str):
+    if '/' in pretrained_model:
+      # pretrained model is a filepath
+      checkpoint = torch.load(pretrained_model)
+      pretrained_id = pretrained_model.split('/')[-1].split('_')[0]
+    else:
+      # pretrained model is a google drive id
+      checkpoint = torch.load(load_gdrive_file(pretrained_model, ending='pth'))
+      pretrained_id = pretrained_model
+  elif pretrained_model and isinstance(pretrained_model, int):
+    loader = get_incense_loader()
+    train_exp = loader.find_by_id(pretrained_model)
+    train_exp.artifacts[pthname].save(settings.TMPDIR)
+    checkpoint = torch.load(
+        os.path.join(settings.TMPDIR, f'{pretrained_model}_{pthname}'))
+    pretrained_id = str(pretrained_model)
+  else:
+    assert False
+  return checkpoint, pretrained_id
