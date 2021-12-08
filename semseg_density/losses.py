@@ -5,7 +5,10 @@ import numpy as np
 
 from torch.autograd import Variable
 
-__all__ = ['MixSoftmaxCrossEntropyLoss', 'MixSoftmaxCrossEntropyOHEMLoss']
+__all__ = [
+    'MaxLogitLoss', 'MixSoftmaxCrossEntropyLoss',
+    'MixSoftmaxCrossEntropyOHEMLoss'
+]
 
 
 class MaxLogitLoss(nn.Module):
@@ -17,10 +20,14 @@ class MaxLogitLoss(nn.Module):
     self.ce = nn.CrossEntropyLoss(ignore_index=ignore_index)
 
   def forward(self, logits, targets):
-    logits.permute((0, 2, 3, 1))
+    ce = self.ce.forward(logits, targets)
+    logits = logits.permute((0, 2, 3, 1))
     # increases the logit for the correct target
-    max_logit = torch.mean(-logits[targets])
-    return self.ce(logits, targets) + self.alpha * max_logit
+    valid = targets != self.ignore_index
+    valid_logits = logits[valid]
+    max_logit = torch.mean(
+        -torch.index_select(valid_logits, dim=0, index=targets[valid]))
+    return ce + self.alpha * max_logit
 
 
 class MixSoftmaxCrossEntropyLoss(nn.CrossEntropyLoss):
