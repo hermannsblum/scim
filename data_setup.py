@@ -1,7 +1,9 @@
 import resource
+
 low, high = resource.getrlimit(resource.RLIMIT_NOFILE)
 resource.setrlimit(resource.RLIMIT_NOFILE, (high, high))
 
+import torchvision
 import tensorflow_datasets as tfds
 import semseg_density.data.coco_segmentation
 import semseg_density.data.nyu_depth_v2
@@ -30,3 +32,9 @@ load_gdrive_file('1uHI2pLJCcSVZaWSTVWFQ8-maHg9o3d7o', ending='pth')
 
 rf_lw101(40)
 rf_lw50(40)
+model = torchvision.models.segmentation.deeplabv3_resnet101(
+    pretrained=False,
+    pretrained_backbone=True,
+    progress=True,
+    num_classes=40,
+    aux_loss=None)
