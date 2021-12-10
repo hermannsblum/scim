@@ -12,6 +12,7 @@ from semseg_density.gdrive import load_gdrive_file
 
 tfds.load('coco/2017_panoptic')
 tfds.load('nyu_depth_v2_labeled/labeled')
+tfds.load('nyu_depth_v2_labeled/no-bag')
 tfds.load('coco_segmentation')
 tfds.load('scan_net/25k')
 tfds.load('scan_net/no-pillow-refridgerator-television')
