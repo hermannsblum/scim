@@ -66,8 +66,8 @@ def train_logit(_run,
                 device='cuda'):
   # DATA LOADING
   data = tfds.load(f'nyu_depth_v2_labeled/{subset}', split='train', as_supervised=True)
-  valdata = data.take(1000)
-  traindata = data.skip(1000)
+  valdata = data.take(500)
+  traindata = data.skip(500)
 
   def data_converter(image, label):
     image = convert_img_to_float(image)
@@ -209,8 +209,8 @@ def train(_run,
           device='cuda'):
   # DATA LOADING
   data = tfds.load(f'nyu_depth_v2_labeled/{subset}', split='train', as_supervised=True)
-  valdata = data.take(1000)
-  traindata = data.skip(1000)
+  valdata = data.take(500)
+  traindata = data.skip(500)
 
   def data_converter(image, label):
     image = convert_img_to_float(image)
@@ -256,12 +256,12 @@ def train(_run,
                                      base_lr=encoder_lr,
                                      nepochs=epochs,
                                      iters_per_epoch=len(train_loader),
-                                     power=.9)
+                                     power=.95)
   decoder_lr_scheduler = LRScheduler(mode='poly',
                                      base_lr=decoder_lr,
                                      nepochs=epochs,
                                      iters_per_epoch=len(train_loader),
-                                     power=.9)
+                                     power=.95)
   metric = SegmentationMetric(40)
 
   def validation(epoch, best_pred):
