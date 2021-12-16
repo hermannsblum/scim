@@ -65,7 +65,9 @@ def train_logit(_run,
                 subset='labeled',
                 device='cuda'):
   # DATA LOADING
-  data = tfds.load(f'nyu_depth_v2_labeled/{subset}', split='train', as_supervised=True)
+  data = tfds.load(f'nyu_depth_v2_labeled/{subset}',
+                   split='train',
+                   as_supervised=True)
   valdata = data.take(500)
   traindata = data.skip(500)
 
@@ -208,7 +210,9 @@ def train(_run,
           subset='labeled',
           device='cuda'):
   # DATA LOADING
-  data = tfds.load(f'nyu_depth_v2_labeled/{subset}', split='train', as_supervised=True)
+  data = tfds.load(f'nyu_depth_v2_labeled/{subset}',
+                   split='train',
+                   as_supervised=True)
   valdata = data.take(500)
   traindata = data.skip(500)
 
@@ -225,7 +229,8 @@ def train(_run,
     return image, label
 
   traindata = TFDataIterableDataset(
-      traindata.cache().prefetch(10000).map(augmentation).map(data_converter))
+      traindata.cache().prefetch(10000).map(lambda x, y: augmentation(
+          x, y, random_crop=(128, 128))).map(data_converter))
   valdata = TFDataIterableDataset(valdata.map(data_converter))
   train_loader = torch.utils.data.DataLoader(dataset=traindata,
                                              batch_size=batchsize,
