@@ -231,7 +231,7 @@ def train(_run,
 
   traindata = TFDataIterableDataset(
       traindata.cache().prefetch(10000).map(lambda x, y: augmentation(
-          x, y, random_crop=(128, 128))).map(data_converter))
+          x, y, random_crop=(256, 256))).map(data_converter))
   valdata = TFDataIterableDataset(valdata.map(data_converter))
   train_loader = torch.utils.data.DataLoader(dataset=traindata,
                                              batch_size=batchsize,
@@ -262,12 +262,14 @@ def train(_run,
                                      base_lr=encoder_lr,
                                      nepochs=epochs,
                                      iters_per_epoch=len(train_loader),
-                                     power=.9)
+                                     offset=len(train_loader) * 50,
+                                     power=.7)
   decoder_lr_scheduler = LRScheduler(mode='poly',
                                      base_lr=decoder_lr,
                                      nepochs=epochs,
                                      iters_per_epoch=len(train_loader),
-                                     power=.9)
+                                     offset=len(train_loader) * 50,
+                                     power=.7)
   metric = SegmentationMetric(40)
 
   def validation(epoch, best_pred):
@@ -300,12 +302,8 @@ def train(_run,
 
     for i, (images, targets) in enumerate(train_loader):
       # learning-rate update
-      if epoch > 50:
-        current_encoder_lr = encoder_lr_scheduler(cur_iters - len(train_loader) * 50)
-        current_decoder_lr = decoder_lr_scheduler(cur_iters - len(train_loader) * 50)
-      else:
-        current_encoder_lr = encoder_lr
-        current_decoder_lr = decoder_lr
+      current_encoder_lr = encoder_lr_scheduler(cur_iters)
+      current_decoder_lr = decoder_lr_scheduler(cur_iters)
       for param_group in encoder_optimizer.param_groups:
         param_group['lr'] = current_encoder_lr
       for param_group in decoder_optimizer.param_groups:
