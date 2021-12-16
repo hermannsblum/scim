@@ -12,13 +12,13 @@ def augmentation(image, label, random_crop=None):
     label = label[..., tf.newaxis]
     added_label_dim = True
   # do some augmentations on image and label together
-  combined = tf.concat((image, label), axis=-1)
+  combined = tf.concat((image, tf.cast(label, tf.float32)), axis=-1)
   combined = tf.image.random_flip_left_right(combined)
   if random_crop is not None:
     combined = tf.image.random_crop(combined, (random_crop[0],  random_crop[1], 4))
   image = combined[...,  :3]
-  label = combined[..., 3]
-  # brightness
+  label = tf.cast(combined[..., 3:], label.dtype)
+   # brightness
   image = tf.image.random_brightness(image, max_delta=.1)
   # hue
   image = tf.image.random_hue(image, max_delta=.1)
