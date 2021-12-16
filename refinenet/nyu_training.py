@@ -213,8 +213,8 @@ def train(_run,
   data = tfds.load(f'nyu_depth_v2_labeled/{subset}',
                    split='train',
                    as_supervised=True)
-  valdata = data.take(500)
-  traindata = data.skip(500)
+  valdata = data.take(300)
+  traindata = data.skip(300)
 
   def data_converter(image, label):
     image = convert_img_to_float(image)
@@ -222,7 +222,8 @@ def train(_run,
     if ignore_other:
       label = tf.where(label >= 37, tf.cast(255, tf.int64), label)
     # the output is 4 times smaller than the input, so transform labels
-    label = tf.image.resize(label[..., tf.newaxis], (120, 160),
+    label = tf.image.resize(label[..., tf.newaxis],
+                            (label.shape[0] // 4, label.shape[1] // 4),
                             method='nearest')[..., 0]
     # move channel from last to 2nd
     image = tf.transpose(image, perm=[2, 0, 1])
@@ -261,12 +262,12 @@ def train(_run,
                                      base_lr=encoder_lr,
                                      nepochs=epochs,
                                      iters_per_epoch=len(train_loader),
-                                     power=.95)
+                                     power=.9)
   decoder_lr_scheduler = LRScheduler(mode='poly',
                                      base_lr=decoder_lr,
                                      nepochs=epochs,
                                      iters_per_epoch=len(train_loader),
-                                     power=.95)
+                                     power=.9)
   metric = SegmentationMetric(40)
 
   def validation(epoch, best_pred):
@@ -299,10 +300,14 @@ def train(_run,
 
     for i, (images, targets) in enumerate(train_loader):
       # learning-rate update
-      current_encoder_lr = encoder_lr_scheduler(cur_iters)
+      if epoch > 50:
+        current_encoder_lr = encoder_lr_scheduler(cur_iters - len(train_loader) * 50)
+        current_decoder_lr = decoder_lr_scheduler(cur_iters - len(train_loader) * 50)
+      else:
+        current_encoder_lr = encoder_lr
+        current_decoder_lr = decoder_lr
       for param_group in encoder_optimizer.param_groups:
         param_group['lr'] = current_encoder_lr
-      current_decoder_lr = decoder_lr_scheduler(cur_iters)
       for param_group in decoder_optimizer.param_groups:
         param_group['lr'] = current_decoder_lr
 
