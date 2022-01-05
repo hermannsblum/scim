@@ -72,7 +72,7 @@ class CocoSegmentation(tfds.core.GeneratorBasedBuilder):
           description=
           'Mapped to NYU classes, only images that have at least 2 classes but no bag.',
           nyu_classes=True,
-          classes=[i for i in range(40) if not NYU_LABEL_NAMES[i] in ('lamp')]),
+          classes=[i for i in range(40) if not NYU_LABEL_NAMES[i] in ('bag')]),
   ]
 
   def _info(self):
@@ -109,12 +109,14 @@ class CocoSegmentation(tfds.core.GeneratorBasedBuilder):
       image = resize_with_crop(blob['image'], (480, 640), method='bilinear')
       semantic = resize_with_crop(semantic[..., tf.newaxis], (480, 640),
                                   method='nearest').numpy()
-      contained_labels = np.unique(semantic)
       if self.builder_config.nyu_classes:
         semantic = COCO_TO_NYU40[semantic]
+        contained_labels = np.unique(semantic)
         if contained_labels.shape[0] < 3:
           # only use images that have 2 classes + ignored pixels
           continue
+      else:
+        contained_labels = np.unique(semantic)
       # check that image only contains allowed labels
       valid = True
       for l in contained_labels.tolist():
