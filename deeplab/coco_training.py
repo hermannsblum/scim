@@ -41,14 +41,14 @@ def load_checkpoint(model, state_dict, strict=True):
 
 def save_checkpoint(model, postfix=None):
   """Save Checkpoint"""
-  filename = 'deeplab_nyu.pth'
+  filename = 'deeplab_coco.pth'
   save_path = os.path.join(TMPDIR, filename)
   if hasattr(model, 'module'):
     torch.save(model.module.state_dict(), save_path)
   else:
     torch.save(model.state_dict(), save_path)
   if postfix is not None:
-    best_filename = f'deeplab_nyu_{postfix}.pth'
+    best_filename = f'deeplab_coco_{postfix}.pth'
     best_filename = os.path.join(TMPDIR, best_filename)
     copyfile(save_path, best_filename)
 
