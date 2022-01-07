@@ -56,15 +56,15 @@ def save_checkpoint(model, postfix=None):
 ex.add_config(batchsize=10,
               epochs=100,
               lr=0.0001,
-              start='imagenet',
+              pretrained_model='imagenet',
               ignore_other=True,
               subset='labeled',
               device='cuda')
 
 
 @ex.main
-def deeplab_nyu(_run, batchsize, epochs, lr, start, ignore_other, subset,
-                device):
+def deeplab_nyu(_run, batchsize, epochs, lr, pretrained_model, ignore_other,
+                subset, device):
   # DATA LOADING
   data = tfds.load(f'nyu_depth_v2_labeled/{subset}',
                    split='train',
@@ -95,14 +95,13 @@ def deeplab_nyu(_run, batchsize, epochs, lr, start, ignore_other, subset,
                                            drop_last=True)
 
   # MODEL SETUP
-  if start == 'imagenet':
+  if pretrained_model == 'imagenet':
     model = torchvision.models.segmentation.deeplabv3_resnet101(
         pretrained=False,
         pretrained_backbone=True,
         progress=True,
         num_classes=40,
         aux_loss=None)
-
   else:
     model = torchvision.models.segmentation.deeplabv3_resnet101(
         pretrained=False,
