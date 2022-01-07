@@ -186,8 +186,8 @@ def deeplab_coco(_run,
     with torch.no_grad():
       validation(epoch, best_pred)
     if epoch % 5 == 0:
-      save_checkpoint(model, postfix=f'{epoch}epochs')
-      _run.add_artifact(os.path.join(TMPDIR, f'deeplab_coco_{epoch}epochs.pth'))
+      save_checkpoint(model, postfix=f'{epoch:05d}epochs')
+      _run.add_artifact(os.path.join(TMPDIR, f'deeplab_coco_{epoch:05d}epochs.pth'))
 
   save_checkpoint(model)
 
