@@ -109,7 +109,7 @@ def deeplab_nyu(_run, batchsize, epochs, lr, pretrained_model, ignore_other,
         progress=True,
         num_classes=40,
         aux_loss=None)
-    load_checkpoint(model, get_checkpoint(start)[0])
+    load_checkpoint(model, get_checkpoint(pretrained_model)[0])
   model.to(device)
   if torch.cuda.device_count() > 1:
     model = torch.nn.DataParallel(
