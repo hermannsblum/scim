@@ -107,9 +107,12 @@ TRAINING_LABEL_NAMES = [
 
 class NyuDepthV2Config(tfds.core.BuilderConfig):
 
-  def __init__(self, labeled=False, classes=range(40), **kwargs):
+  def __init__(self, labeled=False, classes=range(40), min_classes=[], **kwargs):
     super().__init__(version='1.1.0', **kwargs)
+    # classes that are allowed to be in the set
     self.classes = list(classes)
+    # classes that must be in the set
+    self.min_classes = list(min_classes)
     self.labeled = labeled
 
 
@@ -119,6 +122,12 @@ class NyuDepthV2Labeled(tfds.core.GeneratorBasedBuilder):
   VERSION = tfds.core.Version('1.1.0')
 
   BUILDER_CONFIGS = [
+      NyuDepthV2Config(
+          name='bag',
+          description='Subset of frames with only bags.',
+          labeled=True,
+          min_classes=[i for i in range(40) if TRAINING_LABEL_NAMES[i] == 'bag'],
+      ),
       NyuDepthV2Config(
           name='no-bag',
           description='Subset of frames without any bags.',
@@ -151,6 +160,7 @@ class NyuDepthV2Labeled(tfds.core.GeneratorBasedBuilder):
           'labels': tfds.features.Tensor(shape=(480, 640), dtype=tf.uint8),
           'scene': tf.string,
           'sceneType': tf.string,
+          'name': tf.string,
       })
     return tfds.core.DatasetInfo(
         builder=self,
@@ -207,16 +217,21 @@ class NyuDepthV2Labeled(tfds.core.GeneratorBasedBuilder):
               f['labels'][i]).astype('uint16')].astype('uint8')
           # check that image only contains allowed labels
           valid = True
-          for l in np.unique(labels).tolist():
+          labels_in_this_frame = np.unique(labels).tolist()
+          for l in labels_in_this_frame:
             if l == 255:
               # 255 is unlabeled
               continue
             if l not in self.builder_config.classes:
               valid = False
               break
+          for l in self.builder_config.min_classes:
+            if l not in labels_in_this_frame:
+                valid = False
           if not valid:
             continue
 
+          scene = f[f['scenes'][0, i]][:, 0].tobytes().decode('ascii')
           yield i, {
               'accelData':
                   f['accelData'][:, i].astype('float32'),
@@ -229,9 +244,10 @@ class NyuDepthV2Labeled(tfds.core.GeneratorBasedBuilder):
               'labels':
                   labels,
               'scene':
-                  f[f['scenes'][0, i]][:, 0].tobytes().decode('ascii'),
+                  scene,
               'sceneType':
                   f[f['sceneTypes'][0, i]][:, 0].tobytes().decode('ascii'),
+              'name': f'{i:06d}',
           }
     else:
       for directory in tf.io.gfile.listdir(data_path):
