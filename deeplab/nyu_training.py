@@ -19,7 +19,7 @@ from semseg_density.lr_scheduler import LRScheduler
 from semseg_density.segmentation_metrics import SegmentationMetric
 from semseg_density.losses import MixSoftmaxCrossEntropyLoss, MaxLogitLoss
 from semseg_density.settings import TMPDIR
-from semseg_density.sacred_utils import get_observer
+from semseg_density.sacred_utils import get_observer, get_checkpoint
 
 ex = Experiment()
 ex.observers.append(get_observer())
@@ -53,14 +53,18 @@ def save_checkpoint(model, postfix=None):
     copyfile(save_path, best_filename)
 
 
+ex.add_config(batchsize=10,
+              epochs=100,
+              lr=0.0001,
+              start='imagenet',
+              ignore_other=True,
+              subset='labeled',
+              device='cuda')
+
+
 @ex.main
-def deeplab_nyu(_run,
-                batchsize=10,
-                epochs=100,
-                lr=0.0001,
-                ignore_other=True,
-                subset='labeled',
-                device='cuda'):
+def deeplab_nyu(_run, batchsize, epochs, lr, start, ignore_other, subset,
+                device):
   # DATA LOADING
   data = tfds.load(f'nyu_depth_v2_labeled/{subset}',
                    split='train',
@@ -91,12 +95,22 @@ def deeplab_nyu(_run,
                                            drop_last=True)
 
   # MODEL SETUP
-  model = torchvision.models.segmentation.deeplabv3_resnet101(
-      pretrained=False,
-      pretrained_backbone=True,
-      progress=True,
-      num_classes=40,
-      aux_loss=None)
+  if start == 'imagenet':
+    model = torchvision.models.segmentation.deeplabv3_resnet101(
+        pretrained=False,
+        pretrained_backbone=True,
+        progress=True,
+        num_classes=40,
+        aux_loss=None)
+
+  else:
+    model = torchvision.models.segmentation.deeplabv3_resnet101(
+        pretrained=False,
+        pretrained_backbone=False,
+        progress=True,
+        num_classes=40,
+        aux_loss=None)
+    load_checkpoint(model, get_checkpoint(start)[0])
   model.to(device)
   if torch.cuda.device_count() > 1:
     model = torch.nn.DataParallel(
@@ -168,8 +182,9 @@ def deeplab_nyu(_run,
     with torch.no_grad():
       validation(epoch, best_pred)
     if epoch % 5 == 0:
-      save_checkpoint(model, postfix=f'{epoch}epochs')
-      _run.add_artifact(os.path.join(TMPDIR, f'deeplab_nyu_{epoch}epochs.pth'))
+      save_checkpoint(model, postfix=f'{epoch:05d}epochs')
+      _run.add_artifact(
+          os.path.join(TMPDIR, f'deeplab_nyu_{epoch:05d}epochs.pth'))
 
   save_checkpoint(model)
 
