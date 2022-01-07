@@ -117,7 +117,6 @@ def deeplab_coco(_run,
                              base_lr=lr,
                              nepochs=epochs,
                              iters_per_epoch=len(train_loader),
-                             offset=len(train_loader) * 50,
                              power=.9)
   metric = SegmentationMetric(40)
 
