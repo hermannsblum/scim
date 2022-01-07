@@ -34,7 +34,7 @@ def get_incense_loader():
     raise UserWarning("No loader settings found.")
 
 
-def get_checkpoint(pretrained_model, pthname='refinenet_scannet_best.pth'):
+def get_checkpoint(pretrained_model, pthname=None):
   # Load pretrained weights
   if pretrained_model and isinstance(pretrained_model, str):
     if '/' in pretrained_model:
@@ -48,6 +48,9 @@ def get_checkpoint(pretrained_model, pthname='refinenet_scannet_best.pth'):
   elif pretrained_model and isinstance(pretrained_model, int):
     loader = get_incense_loader()
     train_exp = loader.find_by_id(pretrained_model)
+    if pthname is None:
+      print(sorted(list(train_exp.artifacts.keys())))
+      pthname = sorted(list(train_exp.artifacts.keys()))[-1]
     train_exp.artifacts[pthname].save(settings.TMPDIR)
     checkpoint = torch.load(
         os.path.join(settings.TMPDIR, f'{pretrained_model}_{pthname}'))
