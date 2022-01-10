@@ -59,12 +59,13 @@ ex.add_config(batchsize=10,
               pretrained_model='imagenet',
               ignore_other=True,
               subset='labeled',
+              aux_loss=False,
               device='cuda')
 
 
 @ex.main
 def deeplab_nyu(_run, batchsize, epochs, lr, pretrained_model, ignore_other,
-                subset, device):
+                subset, aux_loss, device):
   # DATA LOADING
   data = tfds.load(f'nyu_depth_v2_labeled/{subset}',
                    split='train',
@@ -101,14 +102,14 @@ def deeplab_nyu(_run, batchsize, epochs, lr, pretrained_model, ignore_other,
         pretrained_backbone=True,
         progress=True,
         num_classes=40,
-        aux_loss=None)
+        aux_loss=aux_loss)
   else:
     model = torchvision.models.segmentation.deeplabv3_resnet101(
         pretrained=False,
         pretrained_backbone=False,
         progress=True,
         num_classes=40,
-        aux_loss=None)
+        aux_loss=aux_loss)
     load_checkpoint(model, get_checkpoint(pretrained_model)[0])
   model.to(device)
   if torch.cuda.device_count() > 1:
