@@ -135,6 +135,18 @@ class NyuDepthV2Labeled(tfds.core.GeneratorBasedBuilder):
           classes=[i for i in range(40) if TRAINING_LABEL_NAMES[i] != 'bag'],
       ),
       NyuDepthV2Config(
+          name='book',
+          description='Subset of frames with only books.',
+          labeled=True,
+          min_classes=[i for i in range(40) if TRAINING_LABEL_NAMES[i] == 'book'],
+      ),
+      NyuDepthV2Config(
+          name='no-book',
+          description='Subset of frames without any books.',
+          labeled=True,
+          classes=[i for i in range(40) if TRAINING_LABEL_NAMES[i] != 'book'],
+      ),
+      NyuDepthV2Config(
           name='labeled',
           description=
           'Subset of frames labelled for semantic and instance segmentation.',

@@ -73,6 +73,12 @@ class CocoSegmentation(tfds.core.GeneratorBasedBuilder):
           'Mapped to NYU classes, only images that have at least 2 classes but no bag.',
           nyu_classes=True,
           classes=[i for i in range(40) if not NYU_LABEL_NAMES[i] in ('bag')]),
+      CocoSegmentationConfig(
+          name='nyu-nobook',
+          description=
+          'Mapped to NYU classes, only images that have at least 2 classes but no book.',
+          nyu_classes=True,
+          classes=[i for i in range(40) if not NYU_LABEL_NAMES[i] in ('book')]),
   ]
 
   def _info(self):
