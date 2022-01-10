@@ -53,14 +53,19 @@ def save_checkpoint(model, postfix=None):
     copyfile(save_path, best_filename)
 
 
+ex.add_config(
+    batchsize=10,
+    epochs=100,
+    lr=0.0001,
+    ignore_other=True,
+    subset='nyu',
+    device='cuda',
+    aux_loss=False,
+)
+
+
 @ex.main
-def deeplab_coco(_run,
-                 batchsize=10,
-                 epochs=100,
-                 lr=0.0001,
-                 ignore_other=True,
-                 subset='nyu',
-                 device='cuda'):
+def deeplab_coco(_run, batchsize, epochs, lr, ignore_other, subset, aux_loss, device):
   # DATA LOADING
   traindata = tfds.load(f'coco_segmentation/{subset}',
                         split='train',
@@ -105,7 +110,7 @@ def deeplab_coco(_run,
       pretrained_backbone=True,
       progress=True,
       num_classes=40,
-      aux_loss=None)
+      aux_loss=aux_loss)
   model.to(device)
   if torch.cuda.device_count() > 1:
     model = torch.nn.DataParallel(
@@ -186,7 +191,8 @@ def deeplab_coco(_run,
       validation(epoch, best_pred)
     if epoch % 5 == 0:
       save_checkpoint(model, postfix=f'{epoch:05d}epochs')
-      _run.add_artifact(os.path.join(TMPDIR, f'deeplab_coco_{epoch:05d}epochs.pth'))
+      _run.add_artifact(
+          os.path.join(TMPDIR, f'deeplab_coco_{epoch:05d}epochs.pth'))
 
   save_checkpoint(model)
 
