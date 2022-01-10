@@ -42,6 +42,11 @@ COCO_LABELNAMES = tfds.object_detection.coco.Coco(
     config=tfds.object_detection.coco.Coco.builder_configs['2017_panoptic']
 ).info.features['panoptic_objects']['label'].names
 
+COCO_10_LABEL_NAMES = [
+    'chair', 'cup', 'tv', 'couch', 'laptop', 'keyboard', 'book', 'mouse',
+    'toaster', 'bottle'
+]
+
 
 class CocoSegmentationConfig(tfds.core.BuilderConfig):
 
@@ -79,6 +84,11 @@ class CocoSegmentation(tfds.core.GeneratorBasedBuilder):
           'Mapped to NYU classes, only images that have at least 2 classes but no book.',
           nyu_classes=True,
           classes=[i for i in range(40) if not NYU_LABEL_NAMES[i] in ('book')]),
+      CocoSegmentationConfig(
+          name='10-subset',
+          description='Only images that have these 10 classes.',
+          nyu_classes=False,
+      ),
   ]
 
   def _info(self):
@@ -120,6 +130,12 @@ class CocoSegmentation(tfds.core.GeneratorBasedBuilder):
         contained_labels = np.unique(semantic)
         if contained_labels.shape[0] < 3:
           # only use images that have 2 classes + ignored pixels
+          continue
+      elif self.builder_config.name == '10-subset':
+        semantic = COCO_TO_10[semantic]
+        contained_labels = np.unique(semantic)
+        if contained_labels.shape[0] < 2:
+          # only use images that have at least 1 class
           continue
       else:
         contained_labels = np.unique(semantic)
@@ -180,3 +196,10 @@ for i, coco_label_name in enumerate(COCO_LABELNAMES):
     for j, nyu_label_name in enumerate(NYU_LABEL_NAMES):
       if COCO_TO_NYU40_NAME[coco_label_name] == nyu_label_name:
         COCO_TO_NYU40[i] = j
+
+COCO_TO_10 = 255 * np.ones(256, dtype='uint8')
+for i, coco_label_name in enumerate(COCO_LABELNAMES):
+  if coco_label_name in COCO_10_LABEL_NAMES:
+    for j, labelname in enumerate(COCO_10_LABEL_NAMES):
+      if coco_label_name == labelname:
+        COCO_TO_10[i] = j
