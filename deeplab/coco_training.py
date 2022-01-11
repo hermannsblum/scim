@@ -77,11 +77,17 @@ def deeplab_coco(_run, batchsize, epochs, lr, ignore_other, subset, aux_loss, de
                          split='train',
                          as_supervised=True).take(500)
 
+  max_class = 40
+  if ignore_other:
+    max_class = 37
+  if subset == '10-subset':
+    max_class = 6
+
   def data_converter(image, label):
     image = convert_img_to_float(image)
     label = tf.squeeze(tf.cast(label, tf.int64))
     if ignore_other:
-      label = tf.where(label >= 37, tf.cast(255, tf.int64), label)
+      label = tf.where(label >= max_class, tf.cast(255, tf.int64), label)
     # move channel from last to 2nd
     image = tf.transpose(image, perm=[2, 0, 1])
     return image, label
@@ -96,11 +102,11 @@ def deeplab_coco(_run, batchsize, epochs, lr, ignore_other, subset, aux_loss, de
                                              pin_memory=True,
                                              drop_last=True)
   val_loader = torch.utils.data.DataLoader(dataset=valdata,
-                                           batch_size=batchsize,
+                                           batch_size=1,
                                            pin_memory=True,
                                            drop_last=True)
   nyuval_loader = torch.utils.data.DataLoader(dataset=nyuvaldata,
-                                              batch_size=batchsize,
+                                              batch_size=1,
                                               pin_memory=True,
                                               drop_last=True)
 
@@ -191,8 +197,7 @@ def deeplab_coco(_run, batchsize, epochs, lr, ignore_other, subset, aux_loss, de
       validation(epoch, best_pred)
     if epoch % 5 == 0:
       save_checkpoint(model, postfix=f'{epoch:05d}epochs')
-      _run.add_artifact(
-          os.path.join(TMPDIR, f'deeplab_coco_{epoch:05d}epochs.pth'))
+      _run.add_artifact(os.path.join(TMPDIR, f'deeplab_coco_{epoch:05d}epochs.pth'))
 
   save_checkpoint(model)
 
