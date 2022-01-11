@@ -205,6 +205,8 @@ def deeplab_coco(_run, batchsize, epochs, lr, ignore_other, subset, aux_loss, de
   for filename in ('deeplab_coco.pth', 'deeplab_coco_best.pth'):
     modelpath = os.path.join(TMPDIR, filename)
     _run.add_artifact(modelpath)
+  os.wait()
+  time.sleep(5)
   return best_pred
 
 

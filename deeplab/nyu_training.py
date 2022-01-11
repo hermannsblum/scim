@@ -192,6 +192,8 @@ def deeplab_nyu(_run, batchsize, epochs, lr, pretrained_model, ignore_other,
   for filename in ('deeplab_nyu.pth', 'deeplab_nyu_best.pth'):
     modelpath = os.path.join(TMPDIR, filename)
     _run.add_artifact(modelpath)
+  os.wait()
+  time.sleep(5)
   return best_pred
 
 
