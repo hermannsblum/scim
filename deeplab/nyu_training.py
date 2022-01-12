@@ -102,14 +102,14 @@ def deeplab_nyu(_run, batchsize, epochs, lr, pretrained_model, ignore_other,
         pretrained_backbone=True,
         progress=True,
         num_classes=40,
-        aux_loss=None)
+        aux_loss=aux_loss)
   else:
     model = torchvision.models.segmentation.deeplabv3_resnet101(
         pretrained=False,
         pretrained_backbone=False,
         progress=True,
         num_classes=40,
-        aux_loss=None)
+        aux_loss=aux_loss)
     load_checkpoint(model, get_checkpoint(pretrained_model)[0])
   model.to(device)
   if torch.cuda.device_count() > 1:
