@@ -88,6 +88,8 @@ def run_deeplab(pretrained_model, subset, device='cuda', ignore_other=False):
 
     # store outputs
     name = blob['name'].numpy().decode()
+    np.save(os.path.join(directory, f'{name}_pred.npy'),
+            pred[0].detach().to('cpu').numpy())
     np.save(os.path.join(directory, f'{name}_entropy.npy'),
             softmax_entropy[0].detach().to('cpu').numpy())
     np.save(os.path.join(directory, f'{name}_maxlogit.npy'),
