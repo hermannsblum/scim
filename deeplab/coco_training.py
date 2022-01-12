@@ -129,7 +129,7 @@ def deeplab_coco(_run, batchsize, epochs, lr, ignore_other, subset, aux_loss, de
                              nepochs=epochs,
                              iters_per_epoch=len(train_loader),
                              power=.9)
-  metric = SegmentationMetric(40)
+  metric = SegmentationMetric(10 if subset == '10-subset' else 40)
 
   def validation(epoch, best_pred):
     is_best = False
@@ -205,7 +205,6 @@ def deeplab_coco(_run, batchsize, epochs, lr, ignore_other, subset, aux_loss, de
   for filename in ('deeplab_coco.pth', 'deeplab_coco_best.pth'):
     modelpath = os.path.join(TMPDIR, filename)
     _run.add_artifact(modelpath)
-  os.wait()
   time.sleep(5)
   return best_pred
 
