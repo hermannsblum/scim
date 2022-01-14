@@ -122,7 +122,7 @@ def fit(
   for images, labels in tqdm(train_loader):
     images = images.to(device)
     labels = labels.to('cpu').detach()
-    _ = model(images)
+    out = model(images)
     features = hooks['feat']
     features = features.to('cpu').detach().numpy().transpose([0, 2, 3, 1])
     assert features.shape[-1] == 256
