@@ -99,9 +99,9 @@ def fit(_run,
     logits = model(images)['out'].permute([0, 2, 3, 1]).detach()
     pred = torch.argmax(logits, 3).detach().cpu()
     for c in torch.unique(pred).numpy():
-      class_logits = logits[pred == c].to('cpu')
-      means[c].update(class_logits)
-      del class_logits
+      class_logit = logits[pred == c].mean().to('cpu')
+      means[c].update(class_logit, weight=torch.sum(pred == c))
+      del class_logit
     del logits, labels, images
   computed_means = torch.cat([means[c].compute() for c in range(40)]).to(device)
   del means
@@ -111,11 +111,12 @@ def fit(_run,
   for images, labels in tqdm(train_loader):
     images = images.to(device)
     logits = model(images)['out'].permute([0, 2, 3, 1]).detach()
-    pred = torch.argmax(logits, 3).detach().cpu()
-    mse = torch.square(logits - computed_means)
-    for c in np.unique(pred):
-      class_mse = mse[pred == c].to('cpu')
-      vars[c].update(class_mse)
+    max_logit, pred = torch.max(logits, 3)
+    mse = torch.square(max_logit - torch.take(computed_means, pred))
+    pred = pred.cpu()
+    for c in torch.unique(pred).numpy():
+      class_mse = mse[pred == c].mean().to('cpu')
+      vars[c].update(class_mse, weight=torch.sum(pred == c))
       del class_mse
     del logits, labels, images, mse
   computed_vars = torch.cat([vars[c].compute() for c in range(40)]).to('cpu')
