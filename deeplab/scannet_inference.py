@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 
 tf.config.set_visible_devices([], 'GPU')
 
+import semseg_density.data.scannet
 from semseg_density.data.images import convert_img_to_float
 from semseg_density.data.nyu_depth_v2 import TRAINING_LABEL_NAMES
 from semseg_density.model.deeplab_sml import DeeplabSML
@@ -40,7 +41,7 @@ def load_checkpoint(model, state_dict, strict=True):
 
 @ex.command
 def run_sml(fitting_experiment, subset, device='cuda'):
-  data = tfds.load(f'nyu_depth_v2_labeled/{subset}', split='train')
+  data = tfds.load(f'scan_net/{subset}', split='train')
 
   # MODEL SETUP
   model = DeeplabSML(40)
@@ -53,7 +54,7 @@ def run_sml(fitting_experiment, subset, device='cuda'):
   loader = get_incense_loader()
   fitting_exp = loader.find_by_id(fitting_experiment)
   pretrained_id = str(fitting_exp.config.pretrained_model)
-  directory = os.path.join(EXP_OUT, 'nyu_inference', subset, pretrained_id)
+  directory = os.path.join(EXP_OUT, 'scannet_inference', subset, pretrained_id)
   os.makedirs(directory, exist_ok=True)
 
   for blob in tqdm(data):
@@ -80,7 +81,7 @@ def run_knn(
     k=1,
     feature_name='classifier.2',
 ):
-  data = tfds.load(f'nyu_depth_v2_labeled/{subset}', split='train')
+  data = tfds.load(f'scan_net/{subset}', split='train')
 
   # MODEL SETUP
   loader = get_incense_loader()
@@ -123,7 +124,7 @@ def run_knn(
       m.register_forward_hook(get_activation(feature_name))
 
   # make sure the directory exists
-  directory = os.path.join(EXP_OUT, 'nyu_inference', subset, pretrained_id)
+  directory = os.path.join(EXP_OUT, 'scannet_inference', subset, pretrained_id)
   os.makedirs(directory, exist_ok=True)
 
   for blob in tqdm(data):
@@ -158,7 +159,7 @@ def run_knn(
 
 @ex.main
 def run_deeplab(pretrained_model, subset, device='cuda', ignore_other=False):
-  data = tfds.load(f'nyu_depth_v2_labeled/{subset}', split='train')
+  data = tfds.load(f'scan_net/{subset}', split='train')
 
   # MODEL SETUP
   model = torchvision.models.segmentation.deeplabv3_resnet101(
@@ -179,7 +180,7 @@ def run_deeplab(pretrained_model, subset, device='cuda', ignore_other=False):
   model.eval()
 
   # make sure the directory exists
-  directory = os.path.join(EXP_OUT, 'nyu_inference', subset, pretrained_id)
+  directory = os.path.join(EXP_OUT, 'scannet_inference', subset, pretrained_id)
   os.makedirs(directory, exist_ok=True)
 
   cm = torchmetrics.ConfusionMatrix(num_classes=40, compute_on_step=False)
@@ -190,7 +191,7 @@ def run_deeplab(pretrained_model, subset, device='cuda', ignore_other=False):
     image = tf.transpose(image, perm=[2, 0, 1])[tf.newaxis]
     image = torch.from_numpy(image.numpy()).to(device)
 
-    label = tf.cast(blob['labels'], tf.int64).numpy()
+    label = tf.cast(blob['labels_nyu'], tf.int64).numpy()
     if ignore_other:
       label[label >= 37] = 255
 
