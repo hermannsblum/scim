@@ -85,6 +85,12 @@ class CocoSegmentation(tfds.core.GeneratorBasedBuilder):
           nyu_classes=True,
           classes=[i for i in range(40) if not NYU_LABEL_NAMES[i] in ('books')]),
       CocoSegmentationConfig(
+          name='nyu-notv',
+          description=
+          'Mapped to NYU classes, only images that have at least 2 classes but no tv.',
+          nyu_classes=True,
+          classes=[i for i in range(40) if not NYU_LABEL_NAMES[i] in ('television')]),
+      CocoSegmentationConfig(
           name='10-subset',
           description='Only images that have these 10 classes.',
           nyu_classes=False,
