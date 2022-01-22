@@ -1,7 +1,6 @@
 import torch
 
 from .refinenet import rf_lw50, rf_lw101, rf_lw152
-from .density import TorchGMM, TorchPCA
 
 
 class RefineNetSML(torch.nn.Module):
