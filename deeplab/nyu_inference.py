@@ -20,6 +20,7 @@ from semseg_density.data.nyu_depth_v2 import TRAINING_LABEL_NAMES
 from semseg_density.model.deeplab_sml import DeeplabSML
 from semseg_density.settings import TMPDIR, EXP_OUT
 from semseg_density.sacred_utils import get_incense_loader, get_checkpoint
+from semseg_density.model.postprocessing import BoundarySuppressionWithSmoothing
 
 ex = Experiment()
 
@@ -157,7 +158,11 @@ def run_knn(
 
 
 @ex.main
-def run_deeplab(pretrained_model, subset, device='cuda', ignore_other=False):
+def run_deeplab(pretrained_model,
+                subset,
+                device='cuda',
+                ignore_other=False,
+                postprocessing=False):
   data = tfds.load(f'nyu_depth_v2_labeled/{subset}', split='train')
 
   # MODEL SETUP
@@ -174,9 +179,11 @@ def run_deeplab(pretrained_model, subset, device='cuda', ignore_other=False):
     del checkpoint[k]
   load_checkpoint(model, checkpoint)
   pretrained_model = str(pretrained_model)
-
   model.to(device)
   model.eval()
+
+  if postprocessing:
+    pp = BoundarySuppressionWithSmoothing().to(device)
 
   # make sure the directory exists
   directory = os.path.join(EXP_OUT, 'nyu_inference', subset, pretrained_id)
@@ -196,10 +203,13 @@ def run_deeplab(pretrained_model, subset, device='cuda', ignore_other=False):
 
     # run inference
     logits = model(image)['out']
-    pred = torch.argmax(logits, 1)
-    max_logit = torch.max(logits, 1)
+    max_logit, pred = torch.max(logits, 1)
     softmax_entropy = torch.distributions.categorical.Categorical(
         logits=logits.permute(0, 2, 3, 1)).entropy()
+
+    # run postprocessing
+    if postprocessing:
+      max_logit = pp(max_logit, prediction=pred)
 
     # update confusion matrix, only on labelled pixels
     if np.any(label != 255):
@@ -214,8 +224,10 @@ def run_deeplab(pretrained_model, subset, device='cuda', ignore_other=False):
             pred[0].detach().to('cpu').numpy())
     np.save(os.path.join(directory, f'{name}_entropy.npy'),
             softmax_entropy[0].detach().to('cpu').numpy())
-    np.save(os.path.join(directory, f'{name}_maxlogit.npy'),
-            -max_logit[0].detach().to('cpu').numpy())
+    np.save(
+        os.path.join(directory,
+                     f'{name}_maxlogit{"-pp" if postprocessing else ""}.npy'),
+        -max_logit[0].detach().to('cpu').numpy())
     np.save(os.path.join(directory, f'{name}_label.npy'), label)
 
     if 'instances' in blob:
