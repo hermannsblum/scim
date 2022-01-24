@@ -52,15 +52,26 @@ def save_checkpoint(model, postfix=None):
     copyfile(save_path, best_filename)
 
 
+ex.add_config(
+    batchsize=10,
+    epochs=150,
+    lr=1e-4,
+    ignore_other=True,
+    subset='25k',
+)
+
+
 @ex.main
-def train(_run,
-          batchsize=10,
-          epochs=100,
-          lr=1e-4,
-          groupnorm=False,
-          ignore_other=False,
-          subset='25k',
-          device='cuda'):
+def train(
+    _run,
+    batchsize,
+    epochs,
+    pretrained_model,
+    lr,
+    ignore_other,
+    subset,
+    device='cuda',
+):
   # DATA LOADING
   data = tfds.load(f'scan_net/{subset}', split='train', as_supervised=True)
   valdata = data.take(1000)
@@ -88,11 +99,21 @@ def train(_run,
                                            drop_last=True)
 
   # MODEL SETUP
-  model = torchvision.models.segmentation.deeplabv3_resnet101(pretrained=False,
-                                                              pretrained_backbone=True,
-                                                              progress=True,
-                                                              num_classes=40,
-                                                              aux_loss=None)
+  if pretrained_model == 'imagenet':
+    model = torchvision.models.segmentation.deeplabv3_resnet101(
+        pretrained=False,
+        pretrained_backbone=True,
+        progress=True,
+        num_classes=40,
+        aux_loss=aux_loss)
+  else:
+    model = torchvision.models.segmentation.deeplabv3_resnet101(
+        pretrained=False,
+        pretrained_backbone=False,
+        progress=True,
+        num_classes=40,
+        aux_loss=aux_loss)
+    load_checkpoint(model, get_checkpoint(pretrained_model)[0])
   model.to(device)
   if torch.cuda.device_count() > 1:
     model = torch.nn.DataParallel(
@@ -101,10 +122,10 @@ def train(_run,
   criterion = torch.nn.CrossEntropyLoss(ignore_index=255).to(device)
   optimizer = torch.optim.Adam(model.parameters(), lr=lr)
   lr_scheduler = LRScheduler(mode='poly',
-                                     base_lr=lr,
-                                     nepochs=epochs,
-                                     iters_per_epoch=len(train_loader),
-                                     power=.9)
+                             base_lr=lr,
+                             nepochs=epochs,
+                             iters_per_epoch=len(train_loader),
+                             power=.9)
   metric = SegmentationMetric(40)
 
   def validation(epoch, best_pred):
@@ -174,6 +195,7 @@ def train(_run,
   for filename in ('deeplab_scannet.pth', 'deeplab_scannet_best.pth'):
     modelpath = os.path.join(TMPDIR, filename)
     _run.add_artifact(modelpath)
+  time.sleep(5)
   return best_pred
 
 
