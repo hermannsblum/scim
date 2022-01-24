@@ -38,7 +38,7 @@ class ScanNetConfig(tfds.core.BuilderConfig):
   def __init__(self, scene, classes=range(40), subsampling=None, **kwargs):
     super().__init__(version='1.0.0', **kwargs)
     self.classes = list(classes)
-    assert isinstance(scene, int) or scene in ('25k', '0to9')
+    #assert isinstance(scene, int) or scene in ('25k', '0to9')
     self.scene = scene
     self.subsampling = subsampling
 
@@ -46,9 +46,17 @@ class ScanNetConfig(tfds.core.BuilderConfig):
 class ScanNet(tfds.core.GeneratorBasedBuilder):
   """NYU Depth V2 Dataset."""
 
+  MANUAL_DOWNLOAD_INSTRUCTIONS = """\
+  For val100: Download from https://drive.google.com/file/d/1H8_soxzY-5rs8khGv-vWmBuZFsMzpoMA/view?usp=sharing
+  """
+
   VERSION = tfds.core.Version('1.0.0')
 
   BUILDER_CONFIGS = [
+      ScanNetConfig(name='full', description='all images', scene='full'),
+      ScanNetConfig(name='val100',
+                    description='100 validation scenes',
+                    scene='val100'),
       ScanNetConfig(name='25k',
                     description='all subsampled images',
                     scene='25k'),
@@ -131,6 +139,15 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
               gen_kwargs={'data_path': os.path.join(extracted, '0to9')},
           ),
       ]
+    elif self.builder_config.scene == 'val100':
+      extracted = dl_manager.extract(
+          os.path.join(dl_manager.manual_dir, 'valscans.zip'))
+      return [
+          tfds.core.SplitGenerator(
+              name=tfds.Split.VALIDATION,
+              gen_kwargs={'data_path': os.path.join(extracted)},
+          ),
+      ]
     extracted = dl_manager.download_and_extract(urls['full'])
     return [
         tfds.core.SplitGenerator(
@@ -145,6 +162,8 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
       if isinstance(
           self.builder_config.scene, int
       ) and not scene_dir.startswith(f'scene{self.builder_config.scene:4d}'):
+        continue
+      if scene_dir in VAL_100_SCANS and self.builder_config.scene != 'val100':
         continue
       for file_name in sorted(
           tf.io.gfile.listdir(os.path.join(data_path, scene_dir, 'color'))):
@@ -372,3 +391,31 @@ for i, nyu_id in enumerate(NYU40_IDS):
     NYU40_TO_EIGEN12[nyu_id] = EIGEN13_IDS[i]
   # make sure that 38-40 map to 255 since some part of 39 also counts as 6 in eigen
   NYU40_TO_EIGEN12[38:] = 255
+
+VAL_100_SCANS = [
+    'scene0568_00', 'scene0568_01', 'scene0568_02', 'scene0304_00',
+    'scene0488_00', 'scene0488_01', 'scene0412_00', 'scene0412_01',
+    'scene0217_00', 'scene0019_00', 'scene0019_01', 'scene0414_00',
+    'scene0575_00', 'scene0575_01', 'scene0575_02', 'scene0426_00',
+    'scene0426_01', 'scene0426_02', 'scene0426_03', 'scene0549_00',
+    'scene0549_01', 'scene0578_00', 'scene0578_01', 'scene0578_02',
+    'scene0665_00', 'scene0665_01', 'scene0050_00', 'scene0050_01',
+    'scene0050_02', 'scene0257_00', 'scene0025_00', 'scene0025_01',
+    'scene0025_02', 'scene0583_00', 'scene0583_01', 'scene0583_02',
+    'scene0701_00', 'scene0701_01', 'scene0701_02', 'scene0580_00',
+    'scene0580_01', 'scene0565_00', 'scene0169_00', 'scene0169_01',
+    'scene0655_00', 'scene0655_01', 'scene0655_02', 'scene0063_00',
+    'scene0221_00', 'scene0221_01', 'scene0591_00', 'scene0591_01',
+    'scene0591_02', 'scene0678_00', 'scene0678_01', 'scene0678_02',
+    'scene0462_00', 'scene0427_00', 'scene0595_00', 'scene0193_00',
+    'scene0193_01', 'scene0164_00', 'scene0164_01', 'scene0164_02',
+    'scene0164_03', 'scene0598_00', 'scene0598_01', 'scene0598_02',
+    'scene0599_00', 'scene0599_01', 'scene0599_02', 'scene0328_00',
+    'scene0300_00', 'scene0300_01', 'scene0354_00', 'scene0458_00',
+    'scene0458_01', 'scene0423_00', 'scene0423_01', 'scene0423_02',
+    'scene0307_00', 'scene0307_01', 'scene0307_02', 'scene0606_00',
+    'scene0606_01', 'scene0606_02', 'scene0432_00', 'scene0432_01',
+    'scene0608_00', 'scene0608_01', 'scene0608_02', 'scene0651_00',
+    'scene0651_01', 'scene0651_02', 'scene0430_00', 'scene0430_01',
+    'scene0689_00', 'scene0357_00', 'scene0357_01', 'scene0574_00'
+]
