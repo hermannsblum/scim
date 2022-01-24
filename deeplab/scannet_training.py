@@ -11,7 +11,8 @@ from collections import OrderedDict
 from shutil import make_archive, copyfile
 
 import semseg_density.data.scannet
-from semseg_density.data.tfds_to_torch import TFDataIterableDataset
+from semseg_density.data.nyu_depth_v2 import TRAINING_LABEL_NAMES
+from semseg_density.data.tfds_to_torch import FilteredTFDataIterableDataset
 from semseg_density.data.augmentation import augmentation
 from semseg_density.data.images import convert_img_to_float
 from semseg_density.lr_scheduler import LRScheduler
@@ -68,6 +69,7 @@ def train(
     epochs,
     pretrained_model,
     lr,
+    out_class,
     ignore_other,
     subset,
     device='cuda',
@@ -86,8 +88,17 @@ def train(
     image = tf.transpose(image, perm=[2, 0, 1])
     return image, label
 
-  traindata = TFDataIterableDataset(
-      traindata.cache().prefetch(10000).map(augmentation).map(data_converter))
+  # create a map identifying the outlier class
+  out_class_map = np.zeros(256)
+  for c in range(40):
+    if out_class == TRAINING_LABEL_NAMES[c]:
+      out_class_map[c] = 1
+  assert np.sum(out_class_map) > 0
+
+  traindata = FilteredTFDataIterableDataset(
+      traindata.cache().prefetch(10000).map(lambda x, y: augmentation(
+          x, y, random_crop=(256, 256))).map(data_converter),
+      remove_classes=out_class_map)
   valdata = TFDataIterableDataset(valdata.map(data_converter))
   train_loader = torch.utils.data.DataLoader(dataset=traindata,
                                              batch_size=batchsize,
