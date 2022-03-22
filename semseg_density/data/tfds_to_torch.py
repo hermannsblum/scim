@@ -1,5 +1,6 @@
 import torch
 import tensorflow_datasets as tfds
+import numpy as np
 
 class TFDSIterableDataset(torch.utils.data.IterableDataset):
   def __init__(self, *args, **kwargs):

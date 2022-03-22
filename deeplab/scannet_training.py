@@ -3,6 +3,7 @@ import torch
 import torchvision
 import tensorflow_datasets as tfds
 import tensorflow as tf
+import numpy as np
 
 tf.config.set_visible_devices([], 'GPU')
 import os
@@ -19,7 +20,7 @@ from semseg_density.lr_scheduler import LRScheduler
 from semseg_density.segmentation_metrics import SegmentationMetric
 from semseg_density.losses import MixSoftmaxCrossEntropyLoss
 from semseg_density.settings import TMPDIR
-from semseg_density.sacred_utils import get_observer
+from semseg_density.sacred_utils import get_observer, get_checkpoint
 
 ex = Experiment()
 ex.observers.append(get_observer())
@@ -71,13 +72,14 @@ def train(
     lr,
     out_class,
     ignore_other,
+    aux_loss,
     subset,
     device='cuda',
 ):
   # DATA LOADING
-  data = tfds.load(f'scan_net/{subset}', split='train', as_supervised=True)
-  valdata = data.take(1000)
-  traindata = data.skip(1000)
+  data = tfds.load(f'scan_net/{subset}', split='train')
+  valdata = data.take(1000).map(lambda x: (x['image'], x['labels_nyu']))
+  traindata = data.skip(1000).map(lambda x: (x['image'], x['labels_nyu']))
 
   def data_converter(image, label):
     image = convert_img_to_float(image)
@@ -99,13 +101,13 @@ def train(
       traindata.cache().prefetch(10000).map(lambda x, y: augmentation(
           x, y, random_crop=(256, 256))).map(data_converter),
       remove_classes=out_class_map)
-  valdata = TFDataIterableDataset(valdata.map(data_converter))
+  valdata = FilteredTFDataIterableDataset(valdata.map(data_converter), remove_classes=out_class_map)
   train_loader = torch.utils.data.DataLoader(dataset=traindata,
                                              batch_size=batchsize,
                                              pin_memory=True,
                                              drop_last=True)
   val_loader = torch.utils.data.DataLoader(dataset=valdata,
-                                           batch_size=batchsize,
+                                           batch_size=1,
                                            pin_memory=True,
                                            drop_last=True)
 
