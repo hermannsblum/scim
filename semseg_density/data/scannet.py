@@ -32,6 +32,34 @@ _DESCRIPTION = """\
 Various Splits of Data from the ScanNet dataset.
 """
 
+VAL_100_SCANS = [
+    'scene0568_00', 'scene0568_01', 'scene0568_02', 'scene0304_00',
+    'scene0488_00', 'scene0488_01', 'scene0412_00', 'scene0412_01',
+    'scene0217_00', 'scene0019_00', 'scene0019_01', 'scene0414_00',
+    'scene0575_00', 'scene0575_01', 'scene0575_02', 'scene0426_00',
+    'scene0426_01', 'scene0426_02', 'scene0426_03', 'scene0549_00',
+    'scene0549_01', 'scene0578_00', 'scene0578_01', 'scene0578_02',
+    'scene0665_00', 'scene0665_01', 'scene0050_00', 'scene0050_01',
+    'scene0050_02', 'scene0257_00', 'scene0025_00', 'scene0025_01',
+    'scene0025_02', 'scene0583_00', 'scene0583_01', 'scene0583_02',
+    'scene0701_00', 'scene0701_01', 'scene0701_02', 'scene0580_00',
+    'scene0580_01', 'scene0565_00', 'scene0169_00', 'scene0169_01',
+    'scene0655_00', 'scene0655_01', 'scene0655_02', 'scene0063_00',
+    'scene0221_00', 'scene0221_01', 'scene0591_00', 'scene0591_01',
+    'scene0591_02', 'scene0678_00', 'scene0678_01', 'scene0678_02',
+    'scene0462_00', 'scene0427_00', 'scene0595_00', 'scene0193_00',
+    'scene0193_01', 'scene0164_00', 'scene0164_01', 'scene0164_02',
+    'scene0164_03', 'scene0598_00', 'scene0598_01', 'scene0598_02',
+    'scene0599_00', 'scene0599_01', 'scene0599_02', 'scene0328_00',
+    'scene0300_00', 'scene0300_01', 'scene0354_00', 'scene0458_00',
+    'scene0458_01', 'scene0423_00', 'scene0423_01', 'scene0423_02',
+    'scene0307_00', 'scene0307_01', 'scene0307_02', 'scene0606_00',
+    'scene0606_01', 'scene0606_02', 'scene0432_00', 'scene0432_01',
+    'scene0608_00', 'scene0608_01', 'scene0608_02', 'scene0651_00',
+    'scene0651_01', 'scene0651_02', 'scene0430_00', 'scene0430_01',
+    'scene0689_00', 'scene0357_00', 'scene0357_01', 'scene0574_00'
+]
+
 
 class ScanNetConfig(tfds.core.BuilderConfig):
 
@@ -54,12 +82,17 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
 
   BUILDER_CONFIGS = [
       ScanNetConfig(name='full', description='all images', scene='full'),
-      ScanNetConfig(name='val100',
-                    description='100 validation scenes',
-                    scene='val100'),
+      ScanNetConfig(
+          name='val100',
+          description='100 validation scenes',
+          scene='val100',
+          subsampling=20,
+      ),
       ScanNetConfig(name='25k',
                     description='all subsampled images',
                     scene='25k'),
+      *(ScanNetConfig(name=scene_name, scene='val100')
+        for scene_name in VAL_100_SCANS),
       ScanNetConfig(
           name='0to9',
           description='Frames from scene 0 to 9',
@@ -95,7 +128,7 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
         'labels_eigen12':
             tfds.features.Tensor(shape=(480, 640), dtype=tf.uint8),
     }
-    if self.builder_config.scene == '0to9':
+    if self.builder_config.scene != '25k':
       features['instances'] = tfds.features.Tensor(shape=(480, 640),
                                                    dtype=tf.uint8)
     return tfds.core.DatasetInfo(
@@ -127,7 +160,8 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
           tfds.core.SplitGenerator(
               name=tfds.Split.TRAIN,
               gen_kwargs={
-                  'data_path': os.path.join(extracted, 'scannet_frames_25k')
+                  'data_path': os.path.join(extracted, 'scannet_frames_25k'),
+                  'split': 'train',
               },
           ),
       ]
@@ -136,7 +170,10 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
       return [
           tfds.core.SplitGenerator(
               name=tfds.Split.TRAIN,
-              gen_kwargs={'data_path': os.path.join(extracted, '0to9')},
+              gen_kwargs={
+                  'data_path': os.path.join(extracted, '0to9'),
+                  split: 'train'
+              },
           ),
       ]
     elif self.builder_config.scene == 'val100':
@@ -145,17 +182,23 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
       return [
           tfds.core.SplitGenerator(
               name=tfds.Split.VALIDATION,
-              gen_kwargs={'data_path': os.path.join(extracted)},
+              gen_kwargs={
+                  'data_path': os.path.join(extracted),
+                  split: 'val'
+              },
           ),
       ]
     extracted = dl_manager.download_and_extract(urls['full'])
     return [
         tfds.core.SplitGenerator(
             name=tfds.Split.TRAIN,
-            gen_kwargs={'data_path': os.path.join(extracted, 'scannet')})
+            gen_kwargs={
+                'data_path': os.path.join(extracted, 'scannet'),
+                split: 'train'
+            })
     ]
 
-  def _generate_examples(self, data_path):
+  def _generate_examples(self, data_path, split):
     """Yields examples."""
     subsampler = 0
     for scene_dir in sorted(tf.io.gfile.listdir(data_path)):
@@ -164,6 +207,12 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
       ) and not scene_dir.startswith(f'scene{self.builder_config.scene:4d}'):
         continue
       if scene_dir in VAL_100_SCANS and self.builder_config.scene != 'val100':
+        continue
+      if (self.builder_config.scene == 'val100' and
+          self.builder_config.name != 'val100' and
+          scene_dir != self.builder_config.name):
+        continue
+      if (split == 'train' and scene_dir in VAL_100_SCANS):
         continue
       for file_name in sorted(
           tf.io.gfile.listdir(os.path.join(data_path, scene_dir, 'color'))):
@@ -180,7 +229,9 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
           nyu_labels = (SCANNET_TO_NYU40[raw_labels] - 1).astype('uint8')
           eigen_labels = (SCANNET_TO_EIGEN12[raw_labels] - 1).astype('uint8')
         else:
-          assert os.path.exists(os.path.join(data_path, scene_dir, 'label'))
+          if not os.path.exists(os.path.join(data_path, scene_dir, 'label')):
+            print(scene_dir)
+            assert False
           nyu_labels = cv2.imread(
               os.path.join(data_path, scene_dir, 'label', f'{index:06d}.png'),
               cv2.IMREAD_ANYDEPTH)
@@ -391,31 +442,3 @@ for i, nyu_id in enumerate(NYU40_IDS):
     NYU40_TO_EIGEN12[nyu_id] = EIGEN13_IDS[i]
   # make sure that 38-40 map to 255 since some part of 39 also counts as 6 in eigen
   NYU40_TO_EIGEN12[38:] = 255
-
-VAL_100_SCANS = [
-    'scene0568_00', 'scene0568_01', 'scene0568_02', 'scene0304_00',
-    'scene0488_00', 'scene0488_01', 'scene0412_00', 'scene0412_01',
-    'scene0217_00', 'scene0019_00', 'scene0019_01', 'scene0414_00',
-    'scene0575_00', 'scene0575_01', 'scene0575_02', 'scene0426_00',
-    'scene0426_01', 'scene0426_02', 'scene0426_03', 'scene0549_00',
-    'scene0549_01', 'scene0578_00', 'scene0578_01', 'scene0578_02',
-    'scene0665_00', 'scene0665_01', 'scene0050_00', 'scene0050_01',
-    'scene0050_02', 'scene0257_00', 'scene0025_00', 'scene0025_01',
-    'scene0025_02', 'scene0583_00', 'scene0583_01', 'scene0583_02',
-    'scene0701_00', 'scene0701_01', 'scene0701_02', 'scene0580_00',
-    'scene0580_01', 'scene0565_00', 'scene0169_00', 'scene0169_01',
-    'scene0655_00', 'scene0655_01', 'scene0655_02', 'scene0063_00',
-    'scene0221_00', 'scene0221_01', 'scene0591_00', 'scene0591_01',
-    'scene0591_02', 'scene0678_00', 'scene0678_01', 'scene0678_02',
-    'scene0462_00', 'scene0427_00', 'scene0595_00', 'scene0193_00',
-    'scene0193_01', 'scene0164_00', 'scene0164_01', 'scene0164_02',
-    'scene0164_03', 'scene0598_00', 'scene0598_01', 'scene0598_02',
-    'scene0599_00', 'scene0599_01', 'scene0599_02', 'scene0328_00',
-    'scene0300_00', 'scene0300_01', 'scene0354_00', 'scene0458_00',
-    'scene0458_01', 'scene0423_00', 'scene0423_01', 'scene0423_02',
-    'scene0307_00', 'scene0307_01', 'scene0307_02', 'scene0606_00',
-    'scene0606_01', 'scene0606_02', 'scene0432_00', 'scene0432_01',
-    'scene0608_00', 'scene0608_01', 'scene0608_02', 'scene0651_00',
-    'scene0651_01', 'scene0651_02', 'scene0430_00', 'scene0430_01',
-    'scene0689_00', 'scene0357_00', 'scene0357_01', 'scene0574_00'
-]
