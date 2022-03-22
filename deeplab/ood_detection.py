@@ -13,8 +13,7 @@ from semseg_density.data.nyu_depth_v2 import TRAINING_LABEL_NAMES
 ex = Experiment()
 
 
-@ex.command
-def measure(path, out_classes=['pilow', 'refridgerator', 'television']):
+def get_measurements(path, out_classes):
   directory = os.path.join(EXP_OUT, path)
   frames = [x[:-10] for x in os.listdir(directory) if x.endswith('label.npy')]
   methods = list(
@@ -22,15 +21,7 @@ def measure(path, out_classes=['pilow', 'refridgerator', 'television']):
           filename.split(frames[0])[-1].split('.')[0][1:]
           for filename in os.listdir(directory)
           if filename.startswith(frames[0])))
-  methods.remove('label')
-  methods.remove('pred')
-  methods.remove('instances')
-  method_ap = {
-      m: torchmetrics.AveragePrecision(compute_on_step=False) for m in methods
-  }
-  method_ap['gt'] = torchmetrics.AveragePrecision(compute_on_step=False)
-  method_auroc = {m: torchmetrics.AUROC(compute_on_step=False) for m in methods}
-  method_auroc['gt'] = torchmetrics.AUROC(compute_on_step=False)
+  print(methods)
 
   # map labels to in-domain (0) or out-domain (1)
   ood_map = 255 * np.ones(256, dtype='uint8')
@@ -39,34 +30,47 @@ def measure(path, out_classes=['pilow', 'refridgerator', 'television']):
     if TRAINING_LABEL_NAMES[c] in out_classes:
       ood_map[c] = 1
 
-  for frame in tqdm(frames):
-    label = np.load(os.path.join(directory, f'{frame}_label.npy'))
-    ood = ood_map[label].squeeze()
-    if np.sum(ood < 2) == 0:
-      continue
-    for method in methods:
-      val = -np.load(os.path.join(directory, f'{frame}_{method}.npy')).squeeze()
-      method_ap[method].update(torch.from_numpy(-val[ood < 2]),
-                               torch.from_numpy(ood[ood < 2]))
-      method_auroc[method].update(torch.from_numpy(-val[ood < 2]),
-                                  torch.from_numpy(ood[ood < 2]))
-    method_ap['gt'].update(torch.from_numpy(ood[ood < 2].astype(float)),
-                           torch.from_numpy(ood[ood < 2]))
-    method_auroc['gt'].update(torch.from_numpy(ood[ood < 2].astype(float)),
-                              torch.from_numpy(ood[ood < 2]))
-
   measurements = {}
-  for method in method_ap:
-    measurements[method] = {
-        'AP': float(method_ap[method].compute().numpy()),
-        'AUROC': float(method_auroc[method].compute().numpy())
-    }
-  with pd.option_context('display.float_format', '{:0.4f}'.format):
-    print(pd.DataFrame.from_dict(measurements).T)
+  ap = torchmetrics.AveragePrecision(compute_on_step=False)
+  ap.set_dtype(torch.half)
+  auroc = torchmetrics.AUROC(compute_on_step=False)
+  auroc.set_dtype(torch.half)
+  for method in methods:
+    ap.reset()
+    ap.set_dtype(torch.half)
+    auroc.reset()
+    auroc.set_dtype(torch.half)
+    for frame in tqdm(frames):
+      label = np.load(os.path.join(directory, f'{frame}_label.npy'))
+      ood = ood_map[label].squeeze()
+      if np.sum(ood < 2) == 0:
+        continue
+      val = -np.load(os.path.join(directory, f'{frame}_{method}.npy')).squeeze()
+      if not np.issubdtype(val.dtype, np.floating):
+        print(f'Ignoring {method} because data is not floating type.')
+        methods.remove(method)
+        break
+      ap.update(torch.from_numpy(-val[ood < 2]), torch.from_numpy(ood[ood < 2]))
+      auroc.update(torch.from_numpy(-val[ood < 2]),
+                   torch.from_numpy(ood[ood < 2]))
+    if method in methods:
+      measurements[method] = {
+          'AP': float(ap.compute().numpy()),
+          'AUROC': float(auroc.compute().numpy())
+      }
+  return measurements
 
 
 @ex.command
-def measure_instances(path, out_classes=['pilow', 'refridgerator', 'television']):
+def measure(path, out_classes):
+  measurements = get_measurements(path, out_classes)
+  with pd.option_context('display.float_format', '{:0.4f}'.format):
+    print(pd.DataFrame.from_dict(measurements).T, flush=True)
+
+
+@ex.command
+def measure_instances(path,
+                      out_classes=['pilow', 'refridgerator', 'television']):
   directory = os.path.join(EXP_OUT, path)
   frames = [x[:-10] for x in os.listdir(directory) if x.endswith('label.npy')]
   methods = list(

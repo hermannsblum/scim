@@ -76,8 +76,9 @@ def train(
 ):
   # DATA LOADING
   data = tfds.load(f'scan_net/{subset}', split='train', as_supervised=True)
-  valdata = data.take(1000)
-  traindata = data.skip(1000)
+  valdata = data.take(1000).map(lambda x: x['image'], x['labels_nyu'])
+  traindata = data.skip(1000).map(lambda x: x['image'], x['labels_nyu'])
+
 
   def data_converter(image, label):
     image = convert_img_to_float(image)
