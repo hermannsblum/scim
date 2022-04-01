@@ -161,7 +161,6 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
               name=tfds.Split.TRAIN,
               gen_kwargs={
                   'data_path': os.path.join(extracted, 'scannet_frames_25k'),
-                  'split': 'train',
               },
           ),
       ]
@@ -172,7 +171,6 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
               name=tfds.Split.TRAIN,
               gen_kwargs={
                   'data_path': os.path.join(extracted, '0to9'),
-                  split: 'train'
               },
           ),
       ]
@@ -184,7 +182,6 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
               name=tfds.Split.VALIDATION,
               gen_kwargs={
                   'data_path': os.path.join(extracted),
-                  split: 'val'
               },
           ),
       ]
@@ -194,11 +191,10 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
             name=tfds.Split.TRAIN,
             gen_kwargs={
                 'data_path': os.path.join(extracted, 'scannet'),
-                split: 'train'
             })
     ]
 
-  def _generate_examples(self, data_path, split):
+  def _generate_examples(self, data_path):
     """Yields examples."""
     subsampler = 0
     for scene_dir in sorted(tf.io.gfile.listdir(data_path)):
@@ -211,8 +207,6 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
       if (self.builder_config.scene == 'val100' and
           self.builder_config.name != 'val100' and
           scene_dir != self.builder_config.name):
-        continue
-      if (split == 'train' and scene_dir in VAL_100_SCANS):
         continue
       for file_name in sorted(
           tf.io.gfile.listdir(os.path.join(data_path, scene_dir, 'color'))):
