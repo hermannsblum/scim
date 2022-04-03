@@ -70,7 +70,7 @@ def train(
     epochs,
     pretrained_model,
     lr,
-    out_class,
+    out_classes,
     ignore_other,
     aux_loss,
     subset,
@@ -93,7 +93,7 @@ def train(
   # create a map identifying the outlier class
   out_class_map = np.zeros(256)
   for c in range(40):
-    if out_class == TRAINING_LABEL_NAMES[c]:
+    if TRAINING_LABEL_NAMES[c] in out_classes:
       out_class_map[c] = 1
   assert np.sum(out_class_map) > 0
 
