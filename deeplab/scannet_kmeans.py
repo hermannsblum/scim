@@ -14,7 +14,9 @@ import sklearn
 import sklearn.cluster
 import sklearn.preprocessing
 import sklearn.metrics
-import hdbscan
+from skopt.space import Real, Integer, Categorical
+from skopt import gp_minimize
+from skopt.utils import use_named_args
 
 tf.config.set_visible_devices([], 'GPU')
 import os
@@ -31,6 +33,7 @@ from semseg_density.gdrive import load_gdrive_file
 from semseg_density.segmentation_metrics import SegmentationMetric
 from semseg_density.settings import TMPDIR, EXP_OUT
 from semseg_density.sacred_utils import get_observer, get_checkpoint
+from semseg_density.eval import measure_from_confusion_matrix
 
 ex = Experiment()
 ex.observers.append(get_observer())
@@ -51,6 +54,7 @@ def load_checkpoint(model, state_dict, strict=True):
     model.load_state_dict(state_dict, strict=strict)
 
 
+@ex.capture
 def get_model(pretrained_model, feature_name, device):
   model = torchvision.models.segmentation.deeplabv3_resnet101(
       pretrained=False,
@@ -86,12 +90,19 @@ def get_model(pretrained_model, feature_name, device):
 
 @ex.capture
 @memory.cache
-def get_embeddings(subset, shard, subsample, device, pretrained_model, feature_name):
+def get_embeddings(subset, shard, subsample, device, pretrained_model,
+                   feature_name, pred_name, uncert_name):
   data = tfds.load(f'scan_net/{subset}', split='validation')
-  model, hooks = get_model(pretrained_model, feature_name, device)
-
+  _, pretrained_id = get_checkpoint(pretrained_model)
+  directory = os.path.join(EXP_OUT, 'scannet_inference', subset, pretrained_id)
+  model, hooks = get_model(pretrained_model=pretrained_model,
+                           feature_name=feature_name,
+                           device=device)
   all_features = []
+  all_labels = []
+  all_uncertainties = []
   for blob in tqdm(data.shard(shard, 0)):
+    frame = blob['name'].numpy().decode()
     image = convert_img_to_float(blob['image'])
     # move channel from last to 2nd
     image = tf.transpose(image, perm=[2, 0, 1])[tf.newaxis]
@@ -101,86 +112,47 @@ def get_embeddings(subset, shard, subsample, device, pretrained_model, feature_n
     features = hooks['feat']
     features = features.to('cpu').detach().numpy().transpose([0, 2, 3, 1])
     assert features.shape[-1] == 256
+    label = np.load(os.path.join(directory,
+                                 f'{frame}_{pred_name}.npy')).squeeze()
+    uncert = np.load(os.path.join(directory,
+                                  f'{frame}_{uncert_name}.npy')).squeeze()
+    # interpolate to feature size
+    label = cv2.resize(label,
+                       dsize=(features.shape[2], features.shape[1]),
+                       interpolation=cv2.INTER_NEAREST)
+    assert label.shape[0] == features.shape[1]
+    assert label.shape[1] == features.shape[2]
+    uncert = cv2.resize(uncert,
+                        dsize=(features.shape[2], features.shape[1]),
+                        interpolation=cv2.INTER_LINEAR)
     features = features.reshape((-1, 256))
+    label = label.flatten()
+    uncert = uncert.flatten()
     # subsampling (because storing all these embeddings would be too much)
-    features = features[np.random.choice(
-        features.shape[0], size=[subsample], replace=False)]
-    all_features.append(features)
+    sampled_idx = np.random.choice(features.shape[0],
+                                   size=[subsample],
+                                   replace=False)
+    all_features.append(features[sampled_idx])
+    all_labels.append(label[sampled_idx])
+    all_uncertainties.append(uncert[sampled_idx])
 
-    del logits,  image, features
-  return np.concatenate(all_features, axis=0)
-
-
-def clustering_evaluation(cluster, labels, instances):
-  ret = {}
-  ret['homogeneity'] = sklearn.metrics.homogeneity_score(labels, cluster)
-  # match clusters to classes
-  clusteredlabel = np.zeros_like(labels)
-  for c in np.unique(cluster):
-    # assign to most observed label
-    assigned, counts = np.unique(labels[cluster == c], return_counts=True)
-    clusteredlabel[cluster == c] = assigned[np.argmax(counts)]
-  ret['accuracy'] = sklearn.metrics.accuracy_score(labels, clusteredlabel)
-  # assign each instance to the majority cluster
-  inst_ids = []
-  inst_clusters = []
-  inst_labels = []
-  for i in sorted(np.unique(instances)):
-    inst_ids.append(i)
-    assigned, counts = np.unique(cluster[instances == i], return_counts=True)
-    inst_clusters.append(assigned[np.argmax(counts)])
-    assigned, counts = np.unique(labels[instances == i], return_counts=True)
-    inst_labels.append(assigned[np.argmax(counts)])
-  inst_ids = np.array(inst_ids)
-  inst_clusters = np.array(inst_clusters)
-  inst_labels = np.array(inst_labels)
-  ret['inst_homogeneity'] = sklearn.metrics.homogeneity_score(
-      inst_labels, inst_clusters)
-  # match clusters to classes
-  inst_clusteredlabel = np.zeros_like(inst_labels)
-  for c in np.unique(inst_clusters):
-    # assign to most observed label
-    assigned, counts = np.unique(inst_labels[inst_clusters == c],
-                                 return_counts=True)
-    inst_clusteredlabel[inst_clusters == c] = assigned[np.argmax(counts)]
-  ret['inst_accuracy'] = sklearn.metrics.accuracy_score(inst_labels,
-                                                        inst_clusteredlabel)
-  return ret
+    del logits, image, features, label,  uncert
+  return {
+      'features': np.concatenate(all_features, axis=0),
+      'prediction': np.concatenate(all_labels, axis=0),
+      'uncertainty': np.concatenate(all_uncertainties, axis=0),
+  }
 
 
-ex.add_config(
-    subsample=100,
-    shard=5,
-    algorithm='full',
-    n_clusters=60,
-    device='cuda',
-    feature_name='classifier.2',
-    ignore_other=True,
-)
-
-@ex.main
-def kmeans(_run, algorithm, n_clusters, ignore_other, pretrained_model, device,
-           normalize, subset):
-  features= get_embeddings()
-  print('Loaded all features', flush=True)
-
-  clusterer = sklearn.cluster.KMeans(n_clusters=n_clusters,
-                                     copy_x=False,
-                                     algorithm=algorithm)
-  if normalize:
-    features = sklearn.preprocessing.normalize(features, norm='l2')
-  clustering = clusterer.fit_predict(features)
-  _run.info['clustering'] = clustering
-  print('Fit clustering', flush=True)
-
-  # Now run inference
+@ex.capture
+def kmeans_inference(clusterer, subset, pretrained_model, device, normalize,
+                     _run):
   data = tfds.load(f'scan_net/{subset}', split='validation')
   model, hooks = get_model()
   # make sure the directory exists
   _, pretrained_id = get_checkpoint(pretrained_model)
   directory = os.path.join(EXP_OUT, 'scannet_inference', subset, pretrained_id)
   os.makedirs(directory, exist_ok=True)
-
   for blob in tqdm(data):
     image = convert_img_to_float(blob['image'])
     # move channel from last to 2nd
@@ -194,6 +166,7 @@ def kmeans(_run, algorithm, n_clusters, ignore_other, pretrained_model, device,
     features = features.to('cpu').detach().numpy().transpose([0, 2, 3, 1])
     feature_shape = features.shape
     assert features.shape[-1] == 256
+    # query cluster assignment of closest sample
     cluster_pred = clusterer.predict(features.reshape((-1, 256)))
     cluster_pred = cluster_pred.reshape((feature_shape[1], feature_shape[2]))
     cluster_pred = cv2.resize(cluster_pred, (640, 480),
@@ -202,6 +175,94 @@ def kmeans(_run, algorithm, n_clusters, ignore_other, pretrained_model, device,
     name = blob['name'].numpy().decode()
     np.save(os.path.join(directory, f'{name}_kmeans{_run._id}.npy'),
             cluster_pred)
+
+
+@ex.capture
+def get_kmeans(algorithm, n_clusters, normalize):
+  out = get_embeddings()
+  clusterer = sklearn.cluster.KMeans(n_clusters=n_clusters,
+                                     random_state=2,
+                                     copy_x=False,
+                                     algorithm=algorithm)
+  if normalize:
+    out['features'] = sklearn.preprocessing.normalize(out['features'],
+                                                      norm='l2')
+  out['clustering'] = clusterer.fit_predict(out['features'])
+  return out
+
+
+kmeans_dimensions = [
+    Integer(name='n_clusters', low=2, high=60),
+    Categorical(name='algorithm', categories=['full', 'elkan']),
+    Categorical(name='normalize', categories=[True, False]),
+]
+
+
+@use_named_args(dimensions=kmeans_dimensions)
+def score_kmeans(n_clusters, algorithm, normalize):
+  out = get_kmeans(n_clusters=n_clusters,
+                   algorithm=algorithm,
+                   normalize=normalize)
+  cm = sklearn.metrics.confusion_matrix(
+      out['prediction'][np.logical_and(out['uncertainty'] < -3,
+                                       out['prediction'] != 255)],
+      out['clustering'][np.logical_and(out['uncertainty'] < -3,
+                                       out['prediction'] != 255)],
+      labels=list(range(200)))
+  miou = measure_from_confusion_matrix(cm.astype(np.uint32))['assigned_miou']
+  print(f'{miou=:.3f}')
+  return -1.0 * (0.0 if np.isnan(miou) else miou)
+
+
+ex.add_config(
+    subsample=100,
+    shard=5,
+    algorithm='full',
+    n_clusters=60,
+    device='cuda',
+    feature_name='classifier.2',
+    ignore_other=True,
+)
+
+
+@ex.command
+def best_kmeans(_run, n_calls):
+  # run optimisation
+  result = gp_minimize(func=score_kmeans,
+                       dimensions=kmeans_dimensions,
+                       n_calls=n_calls,
+                       random_state=4)
+  _run.info['best_miou'] = -result.fun
+  _run.info['n_clusters'] = result.x[0]
+  _run.info['algorithm'] = result.x[1]
+  _run.info['normalize'] = result.x[2]
+  # run clustering again with best parameters
+  out = get_embeddings()
+  clusterer = sklearn.cluster.KMeans(n_clusters=result.x[0],
+                                     random_state=2,
+                                     copy_x=False,
+                                     algorithm=result.x[1])
+  if result.x[2]:
+    out['features'] = sklearn.preprocessing.normalize(out['features'],
+                                                      norm='l2')
+  clusterer.fit(out['features'])
+  del out
+  kmeans_inference(clusterer=clusterer, normalize=result.x[2])
+
+
+@ex.main
+def kmeans(algorithm, n_clusters, normalize):
+  out = get_embeddings()
+  clusterer = sklearn.cluster.KMeans(n_clusters=n_clusters,
+                                     random_state=2,
+                                     copy_x=False,
+                                     algorithm=algorithm)
+  if normalize:
+    out['features'] = sklearn.preprocessing.normalize(out['features'],
+                                                      norm='l2')
+  clusterer.fit(out['features'])
+  del out
+  kmeans_inference(clusterer=clusterer)
 
 
 if __name__ == '__main__':
