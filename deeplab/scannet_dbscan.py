@@ -106,6 +106,7 @@ def get_embeddings(subset, shard, subsample, device, pretrained_model,
   all_voxels = []
   all_labels = []
   all_uncertainties = []
+  all_entropies = []
   for blob in tqdm(data.shard(shard, 0)):
     frame = blob['name'].numpy().decode()
     image = convert_img_to_float(blob['image'])
@@ -114,6 +115,8 @@ def get_embeddings(subset, shard, subsample, device, pretrained_model,
     image = torch.from_numpy(image.numpy()).to(device)
     # run inference
     logits = model(image)['out']
+    entropy = torch.distributions.categorical.Categorical(
+        logits=logits.permute(0, 2, 3, 1)).entropy()
     features = hooks['feat']
     features = features.to('cpu').detach().numpy().transpose([0, 2, 3, 1])
     assert features.shape[-1] == 256
@@ -135,10 +138,15 @@ def get_embeddings(subset, shard, subsample, device, pretrained_model,
     uncert = cv2.resize(uncert,
                         dsize=(features.shape[2], features.shape[1]),
                         interpolation=cv2.INTER_LINEAR)
+    entropy = torchvision.transforms.functional.resize(
+        entropy,
+        size=(features.shape[1], features.shape[2]),
+        interpolation=PIL.Image.BILINEAR).to('cpu').detach().numpy()
     features = features.reshape((-1, 256))
     label = label.flatten()
     voxel = voxel.flatten()
     uncert = uncert.flatten()
+    entropy = entropy.flatten()
     # subsampling (because storing all these embeddings would be too much)
     sampled_idx = np.random.choice(features.shape[0],
                                    size=[subsample],
@@ -147,6 +155,7 @@ def get_embeddings(subset, shard, subsample, device, pretrained_model,
     all_labels.append(label[sampled_idx])
     all_voxels.append(voxel[sampled_idx])
     all_uncertainties.append(uncert[sampled_idx])
+    all_entropies.append(entropy[sampled_idx])
 
     del logits, image, features, label, voxel, uncert
   return {
@@ -154,21 +163,22 @@ def get_embeddings(subset, shard, subsample, device, pretrained_model,
       'voxels': np.concatenate(all_voxels, axis=0),
       'prediction': np.concatenate(all_labels, axis=0),
       'uncertainty': np.concatenate(all_uncertainties, axis=0),
+      'entropy': np.concatenate(all_entropies, axis=0),
   }
 
 
 @ex.capture
 @memory.cache
-def get_distances(subset='scene0354_00',
-                  shard=5,
-                  subsample=100,
-                  device='cuda',
-                  pretrained_model=2793,
-                  feature_name='classifier.2',
-                  pred_name='pseudolabel-pred',
-                  uncert_name='pseudolabel-maxlogit-pp',
-                  uncertainty_threshold=-3.,
-                  normalize=True):
+def get_distances(subset,
+                  shard,
+                  subsample,
+                  device,
+                  pretrained_model,
+                  feature_name,
+                  pred_name,
+                  uncert_name,
+                  uncertainty_threshold,
+                  normalize):
   out = get_embeddings(subset=subset,
                        shard=shard,
                        subsample=subsample,
@@ -311,7 +321,7 @@ def score_hdbscan(same_voxel_close, min_cluster_size, min_samples):
                                        out['prediction'] != 255)],
       out['clustering'][np.logical_and(out['uncertainty'] < -3,
                                        out['prediction'] != 255)],
-      labels=list(range(200)))
+      labels=list(range(400)))
   miou = measure_from_confusion_matrix(cm.astype(np.uint32))['assigned_miou']
   print(f'{miou=:.3f}')
   return -1.0 * (0.0 if np.isnan(miou) else miou)
