@@ -34,8 +34,9 @@ from semseg_density.gdrive import load_gdrive_file
 from semseg_density.segmentation_metrics import SegmentationMetric
 from semseg_density.settings import TMPDIR, EXP_OUT
 from semseg_density.sacred_utils import get_observer, get_checkpoint
+from semseg_density.eval import measure_from_confusion_matrix
 
-from deeplab.scannet_dbscan import get_distances
+from deeplab.scannet_dbscan import get_distances, get_model
 
 ex = Experiment()
 ex.observers.append(get_observer())
@@ -59,15 +60,16 @@ def get_nakajima_distances(subset, shard, subsample, device, pretrained_model,
                       uncert_name=uncert_name,
                       normalize=False)
   # weight features by entropy
-  out['features'] = np.expand_dims(1 - out['entropy'] / np.log(40),
+  out['features'] = np.expand_dims(1 - out.pop('entropy') / np.log(40),
                                    1) * out['features']
   out['distances'] = sp.spatial.distance.pdist(out['features'],
                                                metric='euclidean')
+  return out
 
 
 @ex.capture
 def nakajima_inference(weighted_features, clustering, subset, pretrained_model,
-                       device, _run):
+                       device, feature_name, _run):
   # set up NN index to find closest clustered sample
   knn = hnswlib.Index(space='l2', dim=256)
   knn.init_index(max_elements=weighted_features.shape[0],
@@ -76,7 +78,9 @@ def nakajima_inference(weighted_features, clustering, subset, pretrained_model,
                  random_seed=100)
   knn.add_items(weighted_features, clustering)
   data = tfds.load(f'scan_net/{subset}', split='validation')
-  model, hooks = get_model()
+  model, hooks = get_model(pretrained_model=pretrained_model,
+                           feature_name=feature_name,
+                           device=device)
   # make sure the directory exists
   _, pretrained_id = get_checkpoint(pretrained_model)
   directory = os.path.join(EXP_OUT, 'scannet_inference', subset, pretrained_id)
@@ -125,10 +129,14 @@ mcl_nakajima_dimensions = [
 @ex.capture
 def get_mcl_nakajima(eta, inflation):
   out = get_nakajima_distances()
+  del out['inlier_pair']
+  del out['same_class_pair']
+  del out['same_voxel_pair']
+  del out['voxels']
   # add their activation function
   out['distances'] = np.exp(-1.0 * eta * out['distances'])
   # put into square form
-  adjacency = sp.spatial.distance.squareform(dist)
+  adjacency = sp.spatial.distance.squareform(out.pop('distances'))
   # now run the clustering
   result = mc.run_mcl(adjacency / adjacency.mean(),
                       inflation=inflation,
@@ -156,7 +164,7 @@ def score_mcl_nakajima(eta, inflation):
                                        out['prediction'] != 255)],
       out['clustering'][np.logical_and(out['uncertainty'] < -3,
                                        out['prediction'] != 255)],
-      labels=list(range(out['clustering'].max())))
+      labels=list(range(200)))
   miou = measure_from_confusion_matrix(cm.astype(np.uint32))['assigned_miou']
   print(f'{miou=:.3f}')
   return -1.0 * (0.0 if np.isnan(miou) else miou)
@@ -171,7 +179,7 @@ ex.add_config(subsample=100,
 
 
 @ex.command
-def best_mcl_nakajima(n_calls):
+def best_mcl_nakajima(n_calls, _run):
   # run optimisation
   result = gp_minimize(func=score_mcl_nakajima,
                        dimensions=mcl_nakajima_dimensions,
@@ -182,7 +190,7 @@ def best_mcl_nakajima(n_calls):
   _run.info['best_inflation'] = result.x[1]
   # run clustering with best parameters
   out = get_mcl_nakajima(eta=result.x[0], inflation=result.x[1])
-  nakajima_inference(weighted_features=out['feautures'],
+  nakajima_inference(weighted_features=out['features'],
                      clustering=out['clustering'])
 
 
