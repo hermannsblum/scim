@@ -103,7 +103,7 @@ def get_embeddings(subset, shard, subsample, device, pretrained_model,
                            device=device)
 
   all_features = []
-  all_voxels = []
+  all_voxels = np.array([], dtype=np.int32)
   all_labels = []
   all_uncertainties = []
   all_entropies = []
@@ -124,43 +124,65 @@ def get_embeddings(subset, shard, subsample, device, pretrained_model,
                                  f'{frame}_{pred_name}.npy')).squeeze()
     uncert = np.load(os.path.join(directory,
                                   f'{frame}_{uncert_name}.npy')).squeeze()
-    voxel = np.load(os.path.join(directory,
-                                 f'{frame}_pseudolabel-voxels.npy')).squeeze()
+    voxel = np.load(os.path.join(
+        directory,
+        f'{frame}_pseudolabel-voxels.npy')).squeeze().astype(np.int32)
     # interpolate to feature size
     label = cv2.resize(label,
                        dsize=(features.shape[2], features.shape[1]),
                        interpolation=cv2.INTER_NEAREST)
     assert label.shape[0] == features.shape[1]
     assert label.shape[1] == features.shape[2]
-    voxel = cv2.resize(voxel.astype(np.int32),
-                       dsize=(features.shape[2], features.shape[1]),
-                       interpolation=cv2.INTER_NEAREST)
+    label = label.flatten()
+    # reshapes to have array <feature_width * feature_height, list of voxels>
+    voxel = voxel.reshape(
+        (features.shape[1], voxel.shape[0] // features.shape[1],
+         features.shape[2], voxel.shape[1] // features.shape[2]))
+    voxel = np.swapaxes(voxel, 1, 2).reshape(
+        (features.shape[1] * features.shape[2], -1))
     uncert = cv2.resize(uncert,
                         dsize=(features.shape[2], features.shape[1]),
-                        interpolation=cv2.INTER_LINEAR)
+                        interpolation=cv2.INTER_LINEAR).flatten()
     entropy = torchvision.transforms.functional.resize(
         entropy,
         size=(features.shape[1], features.shape[2]),
-        interpolation=PIL.Image.BILINEAR).to('cpu').detach().numpy()
+        interpolation=PIL.Image.BILINEAR).to('cpu').detach().numpy().flatten()
     features = features.reshape((-1, 256))
-    label = label.flatten()
-    voxel = voxel.flatten()
-    uncert = uncert.flatten()
-    entropy = entropy.flatten()
     # subsampling (because storing all these embeddings would be too much)
-    sampled_idx = np.random.choice(features.shape[0],
-                                   size=[subsample],
-                                   replace=False)
+    # first subsample from voxels that we have already sampled
+    already_sampled = np.isin(voxel, all_voxels)
+    assert len(already_sampled.shape) == 2
+    already_sampled_idx = already_sampled.max(-1)
+    if already_sampled_idx.sum() > 0:
+      # sample 20% from known voxels
+      sampled_idx = np.flatnonzero(already_sampled_idx)
+      if sampled_idx.shape[0] > subsample // 5:
+        # reduce to a subset
+        sampled_idx = np.random.choice(sampled_idx,
+                                       size=[subsample // 5],
+                                       replace=False)
+    else:
+      sampled_idx = np.array([], dtype=np.int32)
+    # now add random samples
+    sampled_idx = np.concatenate(
+        (sampled_idx,
+         np.random.choice(features.shape[0],
+                          size=[subsample - sampled_idx.shape[0]],
+                          replace=False)),
+        axis=0)
     all_features.append(features[sampled_idx])
     all_labels.append(label[sampled_idx])
-    all_voxels.append(voxel[sampled_idx])
     all_uncertainties.append(uncert[sampled_idx])
     all_entropies.append(entropy[sampled_idx])
+    # if a feature corresponds to multiple voxels, favor those that are already sampled
+    already_sampled = already_sampled[sampled_idx]
+    all_voxels = np.concatenate(
+        (all_voxels, voxel[sampled_idx, np.argmax(already_sampled, axis=1)]), axis=0)
+    del logits, image, features, label, voxel, uncert, already_sampled
 
-    del logits, image, features, label, voxel, uncert
   return {
       'features': np.concatenate(all_features, axis=0),
-      'voxels': np.concatenate(all_voxels, axis=0),
+      'voxels': all_voxels,
       'prediction': np.concatenate(all_labels, axis=0),
       'uncertainty': np.concatenate(all_uncertainties, axis=0),
       'entropy': np.concatenate(all_entropies, axis=0),
@@ -169,15 +191,8 @@ def get_embeddings(subset, shard, subsample, device, pretrained_model,
 
 @ex.capture
 @memory.cache
-def get_distances(subset,
-                  shard,
-                  subsample,
-                  device,
-                  pretrained_model,
-                  feature_name,
-                  pred_name,
-                  uncert_name,
-                  uncertainty_threshold,
+def get_distances(subset, shard, subsample, device, pretrained_model,
+                  feature_name, pred_name, uncert_name, uncertainty_threshold,
                   normalize):
   out = get_embeddings(subset=subset,
                        shard=shard,
