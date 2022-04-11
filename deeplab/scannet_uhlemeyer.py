@@ -34,41 +34,14 @@ from semseg_density.data.images import convert_img_to_float
 from semseg_density.gdrive import load_gdrive_file
 from semseg_density.segmentation_metrics import SegmentationMetric
 from semseg_density.settings import TMPDIR, EXP_OUT
-from semseg_density.sacred_utils import get_observer, get_checkpoint
+from semseg_density.sacred_utils import get_observer
+
+from deeplab.sampling import get_resnet
 
 ex = Experiment()
 ex.observers.append(get_observer())
 
 memory = Memory("/tmp")
-
-
-@ex.capture
-def get_resnet(feature_name, device):
-  model = torchvision.models.resnet101(pretrained=True)
-  model.to(device)
-  model.eval()
-
-  # Create hook to get features from intermediate pytorch layer
-  hooks = {}
-
-  def get_activation(name, features=hooks):
-
-    def hook(model, input, output):
-      features['feat'] = output.detach()
-
-    return hook
-
-  # register hook to get features
-  for n, m in model.named_modules():
-    if n == feature_name:
-      m.register_forward_hook(get_activation(feature_name))
-  return model, hooks
-
-
-@ex.capture
-@memory.cache
-def get_embeddings(subset, shard, subsample, device):
-  data = tfds.load(f'scan_net/{subset}', split='validation')
 
 
 @ex.capture
@@ -118,9 +91,9 @@ def get_connected_components(subset, pretrained_model, pred_name, uncert_name,
 
 
 @ex.capture
-def get_embeddings_of_components(anomaly_frames, subset, device):
+def get_embeddings_of_components(anomaly_frames, subset, feature_name, device):
   data = tfds.load(f'scan_net/{subset}', split='validation')
-  model, hooks = get_resnet()
+  model, hooks = get_resnet(feature_name=feature_name, device=device)
 
   feature_by_component = {}
   for blob in tqdm(data):
@@ -173,7 +146,6 @@ def uhlemeyer(_run, pretrained_model, subset, pred_name, eps, min_samples):
   tsne = sklearn.manifold.TSNE(n_components=2, random_state=2)
   all_features = tsne.fit_transform(all_features)
   print('TSNE fit', flush=True)
-
 
   clusterer = sklearn.cluster.DBSCAN(eps=eps,
                                      min_samples=min_samples,

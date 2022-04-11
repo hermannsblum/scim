@@ -5,6 +5,7 @@ import PIL
 import tensorflow_datasets as tfds
 import tensorflow as tf
 import numpy as np
+from numpy.random import default_rng
 import scipy as sp
 import scipy.spatial
 import pickle
@@ -17,6 +18,7 @@ import sklearn.cluster
 import sklearn.preprocessing
 import sklearn.metrics
 import hdbscan
+from skopt.callbacks import TimerCallback, EarlyStopper
 from skopt.space import Real, Integer, Categorical
 from skopt import gp_minimize
 from skopt.utils import use_named_args
@@ -29,14 +31,13 @@ from shutil import make_archive, copyfile
 import hnswlib
 
 import semseg_density.data.scannet
-from semseg_density.data.tfds_to_torch import TFDataIterableDataset
-from semseg_density.data.augmentation import augmentation
 from semseg_density.data.images import convert_img_to_float
-from semseg_density.gdrive import load_gdrive_file
 from semseg_density.segmentation_metrics import SegmentationMetric
 from semseg_density.settings import TMPDIR, EXP_OUT
-from semseg_density.sacred_utils import get_observer, get_checkpoint
 from semseg_density.eval import measure_from_confusion_matrix
+from semseg_density.sacred_utils import get_observer, get_checkpoint
+
+from deeplab.sampling import get_deeplab_embeddings, get_deeplab, get_sampling_idx
 
 ex = Experiment()
 ex.observers.append(get_observer())
@@ -44,164 +45,52 @@ ex.observers.append(get_observer())
 memory = Memory("/tmp")
 
 
-def load_checkpoint(model, state_dict, strict=True):
-  # if we currently don't use DataParallel, we have to remove the 'module' prefix
-  # from all weight keys
-  if (not next(iter(model.state_dict())).startswith('module')) and (next(
-      iter(state_dict)).startswith('module')):
-    new_state_dict = OrderedDict()
-    for k, v in state_dict.items():
-      new_state_dict[k[7:]] = v
-    model.load_state_dict(new_state_dict, strict=strict)
-  else:
-    model.load_state_dict(state_dict, strict=strict)
+class DeltaYStopper(EarlyStopper):
+  """Stop the optimization if the `n_best` minima are within `delta`
+    Stop the optimizer if the absolute difference between the `n_best`
+    objective values is less than `delta`.
+    """
 
+  def __init__(self, delta, n_best=5, n_minimum=10):
+    super(EarlyStopper, self).__init__()
+    self.delta = delta
+    self.n_best = n_best
+    self.n_minimum = n_minimum
 
-@ex.capture
-def get_model(pretrained_model, feature_name, device):
-  model = torchvision.models.segmentation.deeplabv3_resnet101(
-      pretrained=False,
-      pretrained_backbone=False,
-      progress=True,
-      num_classes=40,
-      aux_loss=False)
-  checkpoint, pretrained_id = get_checkpoint(pretrained_model)
-  # remove any aux classifier stuff
-  removekeys = [k for k in checkpoint.keys() if k.startswith('aux_classifier')]
-  for k in removekeys:
-    del checkpoint[k]
-  load_checkpoint(model, checkpoint)
-  model.to(device)
-  model.eval()
+  def _criterion(self, result):
+    if len(result.func_vals) < self.n_minimum:
+      return None
+    if len(result.func_vals) >= self.n_best:
+      func_vals = np.sort(result.func_vals)
+      worst = func_vals[self.n_best - 1]
+      best = func_vals[0]
 
-  # Create hook to get features from intermediate pytorch layer
-  hooks = {}
+      # worst is always larger, so no need for abs()
+      return worst - best < self.delta
 
-  def get_activation(name, features=hooks):
-
-    def hook(model, input, output):
-      features['feat'] = output.detach()
-
-    return hook
-
-  # register hook to get features
-  for n, m in model.named_modules():
-    if n == feature_name:
-      m.register_forward_hook(get_activation(feature_name))
-  return model, hooks
-
-
-@ex.capture
-@memory.cache
-def get_embeddings(subset, shard, subsample, device, pretrained_model,
-                   feature_name, pred_name, uncert_name):
-  data = tfds.load(f'scan_net/{subset}', split='validation')
-  _, pretrained_id = get_checkpoint(pretrained_model)
-  directory = os.path.join(EXP_OUT, 'scannet_inference', subset, pretrained_id)
-  model, hooks = get_model(pretrained_model=pretrained_model,
-                           feature_name=feature_name,
-                           device=device)
-
-  all_features = []
-  all_voxels = np.array([], dtype=np.int32)
-  all_labels = []
-  all_uncertainties = []
-  all_entropies = []
-  for blob in tqdm(data.shard(shard, 0)):
-    frame = blob['name'].numpy().decode()
-    image = convert_img_to_float(blob['image'])
-    # move channel from last to 2nd
-    image = tf.transpose(image, perm=[2, 0, 1])[tf.newaxis]
-    image = torch.from_numpy(image.numpy()).to(device)
-    # run inference
-    logits = model(image)['out']
-    entropy = torch.distributions.categorical.Categorical(
-        logits=logits.permute(0, 2, 3, 1)).entropy()
-    features = hooks['feat']
-    features = features.to('cpu').detach().numpy().transpose([0, 2, 3, 1])
-    assert features.shape[-1] == 256
-    label = np.load(os.path.join(directory,
-                                 f'{frame}_{pred_name}.npy')).squeeze()
-    uncert = np.load(os.path.join(directory,
-                                  f'{frame}_{uncert_name}.npy')).squeeze()
-    voxel = np.load(os.path.join(
-        directory,
-        f'{frame}_pseudolabel-voxels.npy')).squeeze().astype(np.int32)
-    # interpolate to feature size
-    label = cv2.resize(label,
-                       dsize=(features.shape[2], features.shape[1]),
-                       interpolation=cv2.INTER_NEAREST)
-    assert label.shape[0] == features.shape[1]
-    assert label.shape[1] == features.shape[2]
-    label = label.flatten()
-    # reshapes to have array <feature_width * feature_height, list of voxels>
-    voxel = voxel.reshape(
-        (features.shape[1], voxel.shape[0] // features.shape[1],
-         features.shape[2], voxel.shape[1] // features.shape[2]))
-    voxel = np.swapaxes(voxel, 1, 2).reshape(
-        (features.shape[1] * features.shape[2], -1))
-    uncert = cv2.resize(uncert,
-                        dsize=(features.shape[2], features.shape[1]),
-                        interpolation=cv2.INTER_LINEAR).flatten()
-    entropy = torchvision.transforms.functional.resize(
-        entropy,
-        size=(features.shape[1], features.shape[2]),
-        interpolation=PIL.Image.BILINEAR).to('cpu').detach().numpy().flatten()
-    features = features.reshape((-1, 256))
-    # subsampling (because storing all these embeddings would be too much)
-    # first subsample from voxels that we have already sampled
-    already_sampled = np.isin(voxel, all_voxels)
-    assert len(already_sampled.shape) == 2
-    already_sampled_idx = already_sampled.max(-1)
-    if already_sampled_idx.sum() > 0:
-      # sample 20% from known voxels
-      sampled_idx = np.flatnonzero(already_sampled_idx)
-      if sampled_idx.shape[0] > subsample // 5:
-        # reduce to a subset
-        sampled_idx = np.random.choice(sampled_idx,
-                                       size=[subsample // 5],
-                                       replace=False)
     else:
-      sampled_idx = np.array([], dtype=np.int32)
-    # now add random samples
-    sampled_idx = np.concatenate(
-        (sampled_idx,
-         np.random.choice(features.shape[0],
-                          size=[subsample - sampled_idx.shape[0]],
-                          replace=False)),
-        axis=0)
-    all_features.append(features[sampled_idx])
-    all_labels.append(label[sampled_idx])
-    all_uncertainties.append(uncert[sampled_idx])
-    all_entropies.append(entropy[sampled_idx])
-    # if a feature corresponds to multiple voxels, favor those that are already sampled
-    already_sampled = already_sampled[sampled_idx]
-    all_voxels = np.concatenate(
-        (all_voxels, voxel[sampled_idx, np.argmax(already_sampled, axis=1)]), axis=0)
-    del logits, image, features, label, voxel, uncert, already_sampled
-
-  return {
-      'features': np.concatenate(all_features, axis=0),
-      'voxels': all_voxels,
-      'prediction': np.concatenate(all_labels, axis=0),
-      'uncertainty': np.concatenate(all_uncertainties, axis=0),
-      'entropy': np.concatenate(all_entropies, axis=0),
-  }
+      return None
 
 
-@ex.capture
 @memory.cache
 def get_distances(subset, shard, subsample, device, pretrained_model,
                   feature_name, pred_name, uncert_name, uncertainty_threshold,
-                  normalize):
-  out = get_embeddings(subset=subset,
-                       shard=shard,
-                       subsample=subsample,
-                       device=device,
-                       pretrained_model=pretrained_model,
-                       feature_name=feature_name,
-                       pred_name=pred_name,
-                       uncert_name=uncert_name)
+                  expected_feature_shape, normalize):
+  out = get_sampling_idx(subset=subset,
+                         shard=shard,
+                         subsample=subsample,
+                         expected_feature_shape=expected_feature_shape,
+                         pretrained_model=pretrained_model)
+  out.update(
+      get_deeplab_embeddings(subset=subset,
+                             shard=shard,
+                             subsample=subsample,
+                             device=device,
+                             pretrained_model=pretrained_model,
+                             expected_feature_shape=expected_feature_shape,
+                             feature_name=feature_name,
+                             pred_name=pred_name,
+                             uncert_name=uncert_name))
   if normalize:
     out['features'] = sklearn.preprocessing.normalize(out['features'])
   out['distances'] = sp.spatial.distance.pdist(out['features'],
@@ -209,7 +98,11 @@ def get_distances(subset, shard, subsample, device, pretrained_model,
   out['same_class_pair'] = np.zeros_like(out['distances'], dtype=bool)
   m = out['features'].shape[0]
   for j in range(m):
+    if out['prediction'][j] == 255:
+      continue
     for i in range(j):
+      if out['prediction'][i] == 255:
+        continue
       out['same_class_pair'][m * i + j - (
           (i + 2) *
           (i + 1)) // 2] = out['prediction'][i] == out['prediction'][j]
@@ -222,17 +115,35 @@ def get_distances(subset, shard, subsample, device, pretrained_model,
   del is_inlier
   out['same_voxel_pair'] = np.zeros_like(out['distances'], dtype=bool)
   for j in range(m):
+    if out['voxels'][j] == 0:
+      continue
     for i in range(j):
+      if out['voxels'][i] == 0:
+        continue
       out['same_voxel_pair'][m * i + j - (
           (i + 2) * (i + 1)) // 2] = out['voxels'][i] == out['voxels'][j]
+  out['testing_idx'] = np.logical_and(
+      out['uncertainty'] < uncertainty_threshold, out['prediction'] != 255)
   return out
 
 
 @ex.capture
-def distance_preprocessing(apply_scaling, same_voxel_close,
+def distance_preprocessing(subset, shard, subsample, device, pretrained_model,
+                           feature_name, pred_name, uncert_name,
+                           uncertainty_threshold, expected_feature_shape,
+                           normalize, apply_scaling, same_voxel_close,
                            distance_activation_factor, _run):
-  out = get_distances()
-  print('Loaded all features', flush=True)
+  out = get_distances(subset=subset,
+                      shard=shard,
+                      subsample=subsample,
+                      device=device,
+                      pretrained_model=pretrained_model,
+                      feature_name=feature_name,
+                      pred_name=pred_name,
+                      uncert_name=uncert_name,
+                      uncertainty_threshold=uncertainty_threshold,
+                      expected_feature_shape=expected_feature_shape,
+                      normalize=normalize)
   # now generate distance matrix
   if apply_scaling:
     # first scale such that 90% of inliers of same class are below 1
@@ -255,12 +166,13 @@ def distance_preprocessing(apply_scaling, same_voxel_close,
       'adjacency': adjacency,
       'prediction': out['prediction'],
       'uncertainty': out['uncertainty'],
+      'testing_idx': out['testing_idx']
   }
 
 
 @ex.capture
 def clustering_based_inference(features, clustering, subset, pretrained_model,
-                               device, normalize, _run):
+                               feature_name, device, normalize, _run):
   # set up NN index to find closest clustered sample
   knn = hnswlib.Index(space='l2', dim=256)
   knn.init_index(max_elements=features.shape[0],
@@ -269,7 +181,9 @@ def clustering_based_inference(features, clustering, subset, pretrained_model,
                  random_seed=100)
   knn.add_items(features, clustering)
   data = tfds.load(f'scan_net/{subset}', split='validation')
-  model, hooks = get_model()
+  model, hooks = get_deeplab(pretrained_model=pretrained_model,
+                             feature_name=feature_name,
+                             device=device)
   # make sure the directory exists
   _, pretrained_id = get_checkpoint(pretrained_model)
   directory = os.path.join(EXP_OUT, 'scannet_inference', subset, pretrained_id)
@@ -300,8 +214,7 @@ def clustering_based_inference(features, clustering, subset, pretrained_model,
 
 
 hdbscan_dimensions = [
-    Categorical(name='same_voxel_close',
-                categories=[None, .1, .2, .3, .4, .5, .6, .7, .8, .9]),
+    Real(name='same_voxel_close', low=0.1, high=1.0),
     Integer(name='min_cluster_size', low=2, high=100),
     Integer(name='min_samples', low=1, high=30),
 ]
@@ -310,19 +223,16 @@ hdbscan_dimensions = [
 @ex.capture
 def get_hdbscan(apply_scaling, same_voxel_close, distance_activation_factor,
                 cluster_selection_method, min_cluster_size, min_samples):
-  out = distance_preprocessing(apply_scaling, same_voxel_close,
-                               distance_activation_factor)
+  out = distance_preprocessing(
+      apply_scaling=apply_scaling,
+      same_voxel_close=same_voxel_close,
+      distance_activation_factor=distance_activation_factor)
   clusterer = hdbscan.HDBSCAN(min_cluster_size=int(min_cluster_size),
                               min_samples=int(min_samples),
                               cluster_selection_method=cluster_selection_method,
                               metric='precomputed')
-  clustering = clusterer.fit_predict(out['adjacency'])
-  return {
-      'features': out['features'],
-      'clustering': clustering,
-      'prediction': out['prediction'],
-      'uncertainty': out['uncertainty'],
-  }
+  out['clustering'] = clusterer.fit_predict(out['adjacency'])
+  return out
 
 
 @use_named_args(dimensions=hdbscan_dimensions)
@@ -331,19 +241,18 @@ def score_hdbscan(same_voxel_close, min_cluster_size, min_samples):
                     min_cluster_size=int(min_cluster_size),
                     min_samples=int(min_samples))
   out['clustering'][out['clustering'] == -1] = 39
-  cm = sklearn.metrics.confusion_matrix(
-      out['prediction'][np.logical_and(out['uncertainty'] < -3,
-                                       out['prediction'] != 255)],
-      out['clustering'][np.logical_and(out['uncertainty'] < -3,
-                                       out['prediction'] != 255)],
-      labels=list(range(400)))
+  # cluster numbers larger than 200 are ignored in the confusion  matrix
+  out['clustering'][out['clustering'] > 200] = 39
+  cm = sklearn.metrics.confusion_matrix(out['prediction'][out['testing_idx']],
+                                        out['clustering'][out['testing_idx']],
+                                        labels=list(range(200)))
   miou = measure_from_confusion_matrix(cm.astype(np.uint32))['assigned_miou']
   print(f'{miou=:.3f}')
   return -1.0 * (0.0 if np.isnan(miou) else miou)
 
 
 dbscan_dimensions = [
-    Real(name='eps', low=0.2, high=10),
+    Real(name='eps', low=0.1, high=3),
     Integer(name='min_samples', low=1, high=40),
 ]
 
@@ -351,30 +260,34 @@ dbscan_dimensions = [
 @ex.capture
 def get_dbscan(apply_scaling, same_voxel_close, distance_activation_factor, eps,
                min_samples):
-  out = distance_preprocessing(apply_scaling, same_voxel_close,
-                               distance_activation_factor)
+  out = distance_preprocessing(
+      apply_scaling=apply_scaling,
+      same_voxel_close=same_voxel_close,
+      distance_activation_factor=distance_activation_factor)
   clusterer = sklearn.cluster.DBSCAN(eps=eps,
                                      min_samples=min_samples,
                                      metric='precomputed')
-  clustering = clusterer.fit_predict(out['adjacency'])
-  return {
-      'features': out['features'],
-      'clustering': clustering,
-      'prediction': out['prediction'],
-      'uncertainty': out['uncertainty'],
-  }
+  adjacency = out['adjacency']
+  del out
+  print('stating clustering')
+  clustering = clusterer.fit_predict(adjacency)
+  out = distance_preprocessing(
+      apply_scaling=apply_scaling,
+      same_voxel_close=same_voxel_close,
+      distance_activation_factor=distance_activation_factor)
+  out['clustering'] = clustering
+  return out
 
 
 @use_named_args(dimensions=dbscan_dimensions)
 def score_dbscan(eps, min_samples):
   out = get_dbscan(eps=eps, min_samples=min_samples)
   out['clustering'][out['clustering'] == -1] = 39
-  cm = sklearn.metrics.confusion_matrix(
-      out['prediction'][np.logical_and(out['uncertainty'] < -3,
-                                       out['prediction'] != 255)],
-      out['clustering'][np.logical_and(out['uncertainty'] < -3,
-                                       out['prediction'] != 255)],
-      labels=list(range(200)))
+  # cluster numbers larger than 200 are ignored in the confusion  matrix
+  out['clustering'][out['clustering'] > 200] = 39
+  cm = sklearn.metrics.confusion_matrix(out['prediction'][out['testing_idx']],
+                                        out['clustering'][out['testing_idx']],
+                                        labels=list(range(200)))
   miou = measure_from_confusion_matrix(cm.astype(np.uint32))['assigned_miou']
   print(f'{miou=:.3f}')
   return -1.0 * (0.0 if np.isnan(miou) else miou)
@@ -385,14 +298,13 @@ ex.add_config(
     shard=5,
     device='cuda',
     feature_name='classifier.2',
+    expected_feature_shape=[60, 80],
+    pred_name='pseudolabel-pred',
+    uncert_name='pseudolabel-maxlogit-pp',
     ignore_other=True,
     apply_scaling=True,
     same_voxel_close=None,
-    use_hdbscan=False,
-    eps=2,
-    min_samples=3,
     uncertainty_threshold=-3,
-    min_cluster_size=15,
     distance_activation_factor=None,
     normalize=True,
 )
@@ -408,10 +320,18 @@ def best_hdbscan(
     n_calls,
 ):
   # run optimisation
+  timer = TimerCallback()
   result = gp_minimize(func=score_hdbscan,
                        dimensions=hdbscan_dimensions,
+                       callback=[
+                           DeltaYStopper(0.01),
+                           timer,
+                       ],
                        n_calls=n_calls,
                        random_state=4)
+  print(
+      f"Optimisation took {np.mean(timer.iter_time):.3f}s on average, total {len(timer.iter_time)} iters."
+  )
   _run.info['best_miou'] = -result.fun
   _run.info['same_voxel_close'] = result.x[0]
   _run.info['min_cluster_size'] = result.x[1]
@@ -425,19 +345,21 @@ def best_hdbscan(
 
 
 @ex.command
-def best_dbscan(
-    _run,
-    ignore_other,
-    pretrained_model,
-    device,
-    subset,
-    n_calls,
-):
+def best_dbscan(_run, n_calls):
   # run optimisation
+  timer = TimerCallback()
   result = gp_minimize(func=score_dbscan,
                        dimensions=dbscan_dimensions,
+                       callback=[
+                           DeltaYStopper(delta=0.002, n_minimum=100, n_best=10),
+                           timer,
+                       ],
                        n_calls=n_calls,
+                       n_initial_points=30 if n_calls > 50 else 10,
                        random_state=4)
+  print(
+      f"Optimisation took {np.mean(timer.iter_time):.3f}s on average, total {len(timer.iter_time)} iters."
+  )
   _run.info['best_miou'] = result.fun
   _run.info['eps'] = result.x[0]
   _run.info['min_samples'] = result.x[1]

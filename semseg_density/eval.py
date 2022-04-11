@@ -2,6 +2,7 @@ import torchmetrics
 import numpy as np
 import torch
 import sklearn
+import sklearn.metrics
 import os
 from tqdm import tqdm
 from joblib import Memory
@@ -88,17 +89,18 @@ def get_measurements_of_method(path, method, ignore_other=True):
     label = np.load(os.path.join(directory, f'{frame}_label.npy'))
     if ignore_other:
       label[label >= 37] = 255
-    pred = np.load(os.path.join(directory, f'{frame}_{method}.npy')).squeeze()
-    # handle nans as misclassification
-    pred[pred == -1] = 39
-    pred[pred == np.nan] = 39
-    pred[pred == 255] = 39
     # update confusion matrix, only on labelled pixels
     if np.any(label != 255):
-      torch_label = torch.from_numpy(label)
-      valid_pred = torch.from_numpy(pred[torch_label != 255])
-      valid_label = torch_label[torch_label != 255]
-      cm.update(valid_pred, valid_label)
+      label = torch.from_numpy(label)
+      pred = np.load(os.path.join(directory, f'{frame}_{method}.npy')).squeeze()
+      # handle nans as misclassification
+      pred[pred == -1] = 39
+      pred[pred == np.nan] = 39
+      # cluster numbers larger than 200 are ignored in  the confusionm  matrix
+      pred[pred > 200] = 39
+      pred = torch.from_numpy(pred)[label != 255]
+      label = label[label != 255]
+      cm.update(pred, label)
   cm = cm.compute().numpy().astype(np.uint32)
   return measure_from_confusion_matrix(cm, is_prediction='pred' in method)
 

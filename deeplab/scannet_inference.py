@@ -159,7 +159,7 @@ def run_knn(
 
 
 @ex.main
-def run_deeplab(pretrained_model, subset, device='cuda', ignore_other=False):
+def run_deeplab(pretrained_model, subset, device='cuda', ignore_other=True):
   if subset == 'val100' or subset.startswith('scene'):
     data = tfds.load(f'scan_net/{subset}', split='validation')
   else:
