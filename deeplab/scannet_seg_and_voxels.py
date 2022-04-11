@@ -131,7 +131,8 @@ def get_distances(subset, shard, subsample, device, pretrained_model,
 def distance_preprocessing(subset, shard, subsample, device, pretrained_model,
                            feature_name, pred_name, uncert_name,
                            uncertainty_threshold, expected_feature_shape,
-                           normalize, apply_scaling, _run):
+                           normalize, apply_scaling, same_voxel_close,
+                           distance_activation_factor, _run):
   out = get_distances(subset=subset,
                       shard=shard,
                       subsample=subsample,
@@ -152,6 +153,13 @@ def distance_preprocessing(subset, shard, subsample, device, pretrained_model,
     scale_value = np.partition(inlier_dist, scale_idx)[scale_idx]
     #_run.info['scale_value'] = scale_value
     out['distances'] /= scale_value
+  if same_voxel_close is not None:
+    # now set distances between same voxel observations to 0.5
+    out['distances'][out['same_voxel_pair']] = float(
+        same_voxel_close) * out['distances'][out['same_voxel_pair']]
+  if distance_activation_factor is not None:
+    out['distances'] = np.exp(distance_activation_factor *
+                              (out['distances'] - 1))
   adjacency = sp.spatial.distance.squareform(out['distances'])
   return {
       'features': out['features'],
@@ -206,15 +214,19 @@ def clustering_based_inference(features, clustering, subset, pretrained_model,
 
 
 hdbscan_dimensions = [
+    Real(name='same_voxel_close', low=0.1, high=1.0),
     Integer(name='min_cluster_size', low=2, high=100),
     Integer(name='min_samples', low=1, high=30),
 ]
 
 
 @ex.capture
-def get_hdbscan(apply_scaling, cluster_selection_method, min_cluster_size,
-                min_samples):
-  out = distance_preprocessing(apply_scaling=apply_scaling)
+def get_hdbscan(apply_scaling, same_voxel_close, distance_activation_factor,
+                cluster_selection_method, min_cluster_size, min_samples):
+  out = distance_preprocessing(
+      apply_scaling=apply_scaling,
+      same_voxel_close=same_voxel_close,
+      distance_activation_factor=distance_activation_factor)
   clusterer = hdbscan.HDBSCAN(min_cluster_size=int(min_cluster_size),
                               min_samples=int(min_samples),
                               cluster_selection_method=cluster_selection_method,
@@ -224,8 +236,9 @@ def get_hdbscan(apply_scaling, cluster_selection_method, min_cluster_size,
 
 
 @use_named_args(dimensions=hdbscan_dimensions)
-def score_hdbscan(min_cluster_size, min_samples):
-  out = get_hdbscan(min_cluster_size=int(min_cluster_size),
+def score_hdbscan(same_voxel_close, min_cluster_size, min_samples):
+  out = get_hdbscan(same_voxel_close=same_voxel_close,
+                    min_cluster_size=int(min_cluster_size),
                     min_samples=int(min_samples))
   out['clustering'][out['clustering'] == -1] = 39
   # cluster numbers larger than 200 are ignored in the confusion  matrix
@@ -239,14 +252,19 @@ def score_hdbscan(min_cluster_size, min_samples):
 
 
 dbscan_dimensions = [
+    Real(name='same_voxel_close', low=0.1, high=1.0),
     Real(name='eps', low=0.1, high=3),
     Integer(name='min_samples', low=1, high=40),
 ]
 
 
 @ex.capture
-def get_dbscan(apply_scaling, eps, min_samples):
-  out = distance_preprocessing(apply_scaling=apply_scaling)
+def get_dbscan(apply_scaling, same_voxel_close, distance_activation_factor, eps,
+               min_samples):
+  out = distance_preprocessing(
+      apply_scaling=apply_scaling,
+      same_voxel_close=same_voxel_close,
+      distance_activation_factor=distance_activation_factor)
   clusterer = sklearn.cluster.DBSCAN(eps=eps,
                                      min_samples=min_samples,
                                      metric='precomputed')
@@ -254,14 +272,19 @@ def get_dbscan(apply_scaling, eps, min_samples):
   del out
   print('stating clustering')
   clustering = clusterer.fit_predict(adjacency)
-  out = distance_preprocessing(apply_scaling=apply_scaling)
+  out = distance_preprocessing(
+      apply_scaling=apply_scaling,
+      same_voxel_close=same_voxel_close,
+      distance_activation_factor=distance_activation_factor)
   out['clustering'] = clustering
   return out
 
 
 @use_named_args(dimensions=dbscan_dimensions)
-def score_dbscan(eps, min_samples):
-  out = get_dbscan(eps=eps, min_samples=min_samples)
+def score_dbscan(same_voxel_close, eps, min_samples):
+  out = get_dbscan(same_voxel_close=same_voxel_close,
+                   eps=eps,
+                   min_samples=min_samples)
   out['clustering'][out['clustering'] == -1] = 39
   # cluster numbers larger than 200 are ignored in the confusion  matrix
   out['clustering'][out['clustering'] > 200] = 39
@@ -313,10 +336,13 @@ def best_hdbscan(
       f"Optimisation took {np.mean(timer.iter_time):.3f}s on average, total {len(timer.iter_time)} iters."
   )
   _run.info['best_miou'] = -result.fun
-  _run.info['min_cluster_size'] = result.x[0]
-  _run.info['min_samples'] = result.x[1]
+  _run.info['same_voxel_close'] = result.x[0]
+  _run.info['min_cluster_size'] = result.x[1]
+  _run.info['min_samples'] = result.x[2]
   # run clustering again with best parameters
-  out = get_hdbscan(min_cluster_size=result.x[0], min_samples=result.x[1])
+  out = get_hdbscan(same_voxel_close=result.x[0],
+                    min_cluster_size=result.x[1],
+                    min_samples=result.x[2])
   clustering_based_inference(features=out['features'],
                              clustering=out['clustering'])
 
@@ -337,11 +363,12 @@ def best_dbscan(_run, n_calls):
   print(
       f"Optimisation took {np.mean(timer.iter_time):.3f}s on average, total {len(timer.iter_time)} iters."
   )
-  _run.info['best_miou'] = result.fun
-  _run.info['eps'] = result.x[0]
-  _run.info['min_samples'] = result.x[1]
+  _run.info['best_miou'] = -result.fun
+  _run.info['same_voxel_close'] = result.x[0]
+  _run.info['eps'] = result.x[1]
+  _run.info['min_samples'] = result.x[2]
   # run clustering again with best parameters
-  out = get_dbscan(eps=result.x[0], min_samples=result.x[1])
+  out = get_dbscan(same_voxel_close=result.x[0], eps=result.x[1], min_samples=result.x[2])
   clustering_based_inference(features=out['features'],
                              clustering=out['clustering'])
 
