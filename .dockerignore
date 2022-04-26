@@ -1,0 +1,7 @@
+.git
+ws_py
+.vscode
+venv
+*.egg-info
+build
+*.simg

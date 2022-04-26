@@ -1,0 +1,9 @@
+Bootstrap: docker-daemon
+From: semseg:latest
+
+%setup
+    echo "Done"
+
+%test
+    #cd /semseg
+    #python deeplab/scannet_inference.py with pretrained_model=2793 subset=scene0354_00 split=validation[:1%] -u
