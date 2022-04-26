@@ -36,7 +36,8 @@ from semsegcluster.settings import TMPDIR, EXP_OUT
 from semsegcluster.sacred_utils import get_observer, get_checkpoint
 from semsegcluster.eval import measure_from_confusion_matrix
 
-from deeplab.scannet_dbscan import get_distances, get_deeplab
+from deeplab.sampling import (get_geometric_features, get_deeplab_embeddings,
+                              get_sampling_idx, get_deeplab)
 
 ex = Experiment()
 ex.observers.append(get_observer())
@@ -47,30 +48,77 @@ memory = Memory("/tmp")
 @ex.capture
 @memory.cache
 def get_nakajima_distances(subset, shard, subsample, device, pretrained_model,
-                           feature_name, pred_name, uncert_name, expected_feature_shape,
-                           uncertainty_threshold):
-  out = get_distances(subset=subset,
-                      shard=shard,
-                      subsample=subsample,
-                      device=device,
-                      pretrained_model=pretrained_model,
-                      uncertainty_threshold=uncertainty_threshold,
-                      feature_name=feature_name,
-                      expected_feature_shape=expected_feature_shape,
-                      pred_name=pred_name,
-                      uncert_name=uncert_name,
-                      normalize=False)
+                           feature_name, pred_name, uncert_name,
+                           expected_feature_shape, uncertainty_threshold):
+  out = get_sampling_idx(subset=subset,
+                         shard=shard,
+                         subsample=subsample,
+                         expected_feature_shape=expected_feature_shape,
+                         pretrained_model=pretrained_model)
+  out.update(
+      get_deeplab_embeddings(subset=subset,
+                             shard=shard,
+                             subsample=subsample,
+                             device=device,
+                             pretrained_model=pretrained_model,
+                             expected_feature_shape=expected_feature_shape,
+                             feature_name=feature_name,
+                             pred_name=pred_name,
+                             uncert_name=uncert_name))
+  out.update(
+      get_geometric_features(subset=subset,
+                             shard=shard,
+                             subsample=subsample,
+                             pretrained_model=pretrained_model,
+                             expected_feature_shape=expected_feature_shape))
+  # removing points without geometric feature (ie no NANs)
+  has_geometry = np.isfinite(out['geometric_features'].mean(1))
+  del out['sampling_idx']
+  for k in out:
+    out[k] = out[k][has_geometry]
   # weight features by entropy
-  out['features'] = np.expand_dims(1 - out.pop('entropy') / np.log(40),
-                                   1) * out['features']
+  entropy_weight = np.expand_dims(out.pop('entropy') / np.log(40), 1)
+  out['features'] = (1 - entropy_weight) * out['features']
   out['distances'] = sp.spatial.distance.pdist(out['features'],
                                                metric='euclidean')
+  out['geometric_features'] = entropy_weight * out['geometric_features']
+  out['geometric_distances'] = sp.spatial.distance.pdist(
+      out['geometric_features'], metric='euclidean')
+  out['same_class_pair'] = np.zeros_like(out['distances'], dtype=bool)
+  m = out['features'].shape[0]
+  for j in range(m):
+    if out['prediction'][j] == 255:
+      continue
+    for i in range(j):
+      if out['prediction'][i] == 255:
+        continue
+      out['same_class_pair'][m * i + j - (
+          (i + 2) *
+          (i + 1)) // 2] = out['prediction'][i] == out['prediction'][j]
+  out['inlier_pair'] = np.zeros_like(out['distances'], dtype=bool)
+  is_inlier = out['uncertainty'] < uncertainty_threshold
+  for j in range(m):
+    for i in range(j):
+      out['inlier_pair'][m * i + j - ((i + 2) * (i + 1)) // 2] = np.logical_and(
+          is_inlier[i], is_inlier[j])
+  del is_inlier
+  out['same_voxel_pair'] = np.zeros_like(out['distances'], dtype=bool)
+  for j in range(m):
+    if out['voxels'][j] == 0:
+      continue
+    for i in range(j):
+      if out['voxels'][i] == 0:
+        continue
+      out['same_voxel_pair'][m * i + j - (
+          (i + 2) * (i + 1)) // 2] = out['voxels'][i] == out['voxels'][j]
+  out['testing_idx'] = np.logical_and(
+      out['uncertainty'] < uncertainty_threshold, out['prediction'] != 255)
   return out
 
 
 @ex.capture
-def nakajima_inference(weighted_features, clustering, subset, pretrained_model,
-                       device, feature_name, _run):
+def nakajima_inference(weighted_features, geometric_features, clustering,
+                       subset, pretrained_model, device, feature_name, _run):
   # set up NN index to find closest clustered sample
   knn = hnswlib.Index(space='l2', dim=256)
   knn.init_index(max_elements=weighted_features.shape[0],
@@ -78,6 +126,13 @@ def nakajima_inference(weighted_features, clustering, subset, pretrained_model,
                  ef_construction=200,
                  random_seed=100)
   knn.add_items(weighted_features, clustering)
+  # onother KNN for imagenet features
+  geo_knn = hnswlib.Index(space='l2', dim=geometric_features.shape[-1])
+  geo_knn.init_index(max_elements=geometric_features.shape[0],
+                     M=64,
+                     ef_construction=200,
+                     random_seed=100)
+  geo_knn.add_items(geometric_features, clustering)
   data = tfds.load(f'scan_net/{subset}', split='validation')
   model, hooks = get_deeplab(pretrained_model=pretrained_model,
                              feature_name=feature_name,
@@ -87,6 +142,10 @@ def nakajima_inference(weighted_features, clustering, subset, pretrained_model,
   directory = os.path.join(EXP_OUT, 'scannet_inference', subset, pretrained_id)
   os.makedirs(directory, exist_ok=True)
 
+  # load geometric features
+  with open(os.path.join(directory, 'blockid_to_descriptor.pkl'), 'rb') as f:
+    blockid_to_descriptor = pickle.load(f)
+  feature_voxels = np.array(list(blockid_to_descriptor.keys()))
   for blob in tqdm(data):
     image = convert_img_to_float(blob['image'])
     # move channel from last to 2nd
@@ -110,7 +169,40 @@ def nakajima_inference(weighted_features, clustering, subset, pretrained_model,
     # weight features by entropy:
     features = np.expand_dims(1 - entropy / np.log(40), 1) * features
     # query cluster assignment of closest sample
-    cluster_pred, _ = knn.knn_query(features, k=1)
+    dl_pred, dl_distance = knn.knn_query(features, k=1)
+    try:
+      voxel = np.load(os.path.join(
+          directory,
+          f'{frame}_pseudolabel-voxels.npy')).squeeze().astype(np.int32)
+      # reshapes to have array <feature_width * feature_height, list of voxels>
+      voxel = voxel.reshape((expected_feature_shape[0],
+                             voxel.shape[0] // expected_feature_shape[0],
+                             expected_feature_shape[1],
+                             voxel.shape[1] // expected_feature_shape[1]))
+      voxel = np.swapaxes(voxel, 1, 2).reshape(
+          (expected_feature_shape[0] * expected_feature_shape[1], -1))
+      has_feature = np.isin(voxel, feature_voxels)
+      # out of the possible voxels, pick one that has a feature
+      voxel = voxel[range(voxel.shape[0]),
+                    np.argmax(has_feature, axis=-1)].flatten()
+      has_feature = has_feature.max(-1).flatten()
+      geometric_features = []
+      for v in voxel:
+        if v in blockid_to_descriptor:
+          geometric_features.append(blockid_to_descriptor[v])
+        else:
+          geometric_features.append(np.array([np.nan for _ in range(32)]))
+      del voxel
+      geometric_features = np.stack(geometric_features, axis=0)
+      # weight features by entropy:
+      geometric_features = np.expand_dims(entropy / np.log(40),
+                                          1) * geometric_features
+      geo_pred, geo_distance = geo_knn.knn_query(geometric_features, k=1)
+      del geometric_features
+      geo_distance[np.logical_not(has_feature)] = 1e10
+      cluster_pred = np.where(dl_distance < geo_distance, dl_pred, geo_pred)
+    except FileNotFoundError:
+      cluster_pred = dl_pred
     # rescale to output size
     cluster_pred = cluster_pred.reshape((feature_shape[1], feature_shape[2]))
     cluster_pred = cv2.resize(cluster_pred, (640, 480),
@@ -130,8 +222,8 @@ mcl_nakajima_dimensions = [
 @ex.capture
 def get_mcl_nakajima(eta, inflation):
   out = get_nakajima_distances()
-  n_points =  out['features'].shape[0]
-  distances = out['distances']
+  n_points = out['features'].shape[0]
+  distances = out['distances'] + out['geometric_distances']
   del out
   # add their activation function
   distances = np.exp(-1.0 * eta * distances)
@@ -150,6 +242,8 @@ def get_mcl_nakajima(eta, inflation):
   out = get_nakajima_distances()
   return {
       'features': out['features'],
+      'geometric_features': out['geometric_features'],
+      'testing_idx': out['testing_idx'],
       'clustering': clustering,
       'prediction': out['prediction'],
       'uncertainty': out['uncertainty'],
@@ -160,12 +254,9 @@ def get_mcl_nakajima(eta, inflation):
 def score_mcl_nakajima(eta, inflation):
   out = get_mcl_nakajima(eta=eta, inflation=inflation)
   out['clustering'][out['clustering'] == -1] = 39
-  cm = sklearn.metrics.confusion_matrix(
-      out['prediction'][np.logical_and(out['uncertainty'] < -3,
-                                       out['prediction'] != 255)],
-      out['clustering'][np.logical_and(out['uncertainty'] < -3,
-                                       out['prediction'] != 255)],
-      labels=list(range(200)))
+  cm = sklearn.metrics.confusion_matrix(out['prediction'][out['testing_idx']],
+                                        out['clustering'][out['testing_idx']],
+                                        labels=list(range(200)))
   miou = measure_from_confusion_matrix(cm.astype(np.uint32))['assigned_miou']
   print(f'{miou=:.3f}')
   return -1.0 * (0.0 if np.isnan(miou) else miou)
@@ -195,6 +286,7 @@ def best_mcl_nakajima(n_calls, _run):
   # run clustering with best parameters
   out = get_mcl_nakajima(eta=result.x[0], inflation=result.x[1])
   nakajima_inference(weighted_features=out['features'],
+                     geometric_features=out['geometric_features'],
                      clustering=out['clustering'])
 
 
