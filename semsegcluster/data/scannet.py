@@ -22,8 +22,8 @@ import tensorflow.compat.v2 as tf
 
 import tensorflow_datasets.public_api as tfds
 
-from semseg_density.data.images import resize_with_crop
-from semseg_density.data.nyu_depth_v2 import TRAINING_LABEL_NAMES
+from semsegcluster.data.images import resize_with_crop
+from semsegcluster.data.nyu_depth_v2 import TRAINING_LABEL_NAMES
 
 _CITATION = """\
 """

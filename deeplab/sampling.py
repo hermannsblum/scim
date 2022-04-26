@@ -13,11 +13,12 @@ import os
 import cv2
 from collections import defaultdict
 from joblib import Memory
+import pickle
 
-from semseg_density.data.images import convert_img_to_float
-from semseg_density.gdrive import load_gdrive_file
-from semseg_density.settings import TMPDIR, EXP_OUT
-from semseg_density.sacred_utils import get_observer, get_checkpoint
+from semsegcluster.data.images import convert_img_to_float
+from semsegcluster.gdrive import load_gdrive_file
+from semsegcluster.settings import TMPDIR, EXP_OUT
+from semsegcluster.sacred_utils import get_observer, get_checkpoint
 
 memory = Memory(EXP_OUT)
 

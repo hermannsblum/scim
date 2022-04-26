@@ -2,7 +2,7 @@ import tensorflow as tf
 import tensorflow_datasets as tfds
 import numpy as np
 
-from semseg_density.data.nyu_depth_v2 import TRAINING_LABEL_NAMES as NYU_LABEL_NAMES
+from semsegcluster.data.nyu_depth_v2 import TRAINING_LABEL_NAMES as NYU_LABEL_NAMES
 
 
 def resize_with_crop(image, shape, method='bilinear'):

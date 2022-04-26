@@ -15,13 +15,13 @@ import matplotlib.pyplot as plt
 
 tf.config.set_visible_devices([], 'GPU')
 
-import semseg_density.data.scannet
-from semseg_density.data.images import convert_img_to_float
-from semseg_density.data.nyu_depth_v2 import TRAINING_LABEL_NAMES
-from semseg_density.model.deeplab_sml import DeeplabSML
-from semseg_density.settings import TMPDIR, EXP_OUT
-from semseg_density.sacred_utils import get_incense_loader, get_checkpoint
-from semseg_density.model.postprocessing import BoundarySuppressionWithSmoothing
+import semsegcluster.data.scannet
+from semsegcluster.data.images import convert_img_to_float
+from semsegcluster.data.nyu_depth_v2 import TRAINING_LABEL_NAMES
+from semsegcluster.model.deeplab_sml import DeeplabSML
+from semsegcluster.settings import TMPDIR, EXP_OUT
+from semsegcluster.sacred_utils import get_incense_loader, get_checkpoint
+from semsegcluster.model.postprocessing import BoundarySuppressionWithSmoothing
 
 ex = Experiment()
 

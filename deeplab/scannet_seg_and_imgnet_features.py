@@ -21,6 +21,7 @@ import hdbscan
 from skopt.space import Real, Integer, Categorical
 from skopt import gp_minimize
 from skopt.utils import use_named_args
+import markov_clustering as mc
 
 tf.config.set_visible_devices([], 'GPU')
 import os
@@ -29,12 +30,12 @@ from collections import OrderedDict
 from shutil import make_archive, copyfile
 import hnswlib
 
-import semseg_density.data.scannet
-from semseg_density.data.images import convert_img_to_float
-from semseg_density.segmentation_metrics import SegmentationMetric
-from semseg_density.settings import TMPDIR, EXP_OUT
-from semseg_density.eval import measure_from_confusion_matrix
-from semseg_density.sacred_utils import get_observer, get_checkpoint
+import semsegcluster.data.scannet
+from semsegcluster.data.images import convert_img_to_float
+from semsegcluster.segmentation_metrics import SegmentationMetric
+from semsegcluster.settings import TMPDIR, EXP_OUT
+from semsegcluster.eval import measure_from_confusion_matrix
+from semsegcluster.sacred_utils import get_observer, get_checkpoint
 
 from deeplab.sampling import (get_deeplab_embeddings, get_deeplab,
                               get_imagenet_embeddings, get_sampling_idx,

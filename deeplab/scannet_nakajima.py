@@ -26,17 +26,17 @@ from collections import OrderedDict
 from shutil import make_archive, copyfile
 import hnswlib
 
-import semseg_density.data.scannet
-from semseg_density.data.tfds_to_torch import TFDataIterableDataset
-from semseg_density.data.augmentation import augmentation
-from semseg_density.data.images import convert_img_to_float
-from semseg_density.gdrive import load_gdrive_file
-from semseg_density.segmentation_metrics import SegmentationMetric
-from semseg_density.settings import TMPDIR, EXP_OUT
-from semseg_density.sacred_utils import get_observer, get_checkpoint
-from semseg_density.eval import measure_from_confusion_matrix
+import semsegcluster.data.scannet
+from semsegcluster.data.tfds_to_torch import TFDataIterableDataset
+from semsegcluster.data.augmentation import augmentation
+from semsegcluster.data.images import convert_img_to_float
+from semsegcluster.gdrive import load_gdrive_file
+from semsegcluster.segmentation_metrics import SegmentationMetric
+from semsegcluster.settings import TMPDIR, EXP_OUT
+from semsegcluster.sacred_utils import get_observer, get_checkpoint
+from semsegcluster.eval import measure_from_confusion_matrix
 
-from deeplab.scannet_dbscan import get_distances, get_model
+from deeplab.scannet_dbscan import get_distances, get_deeplab
 
 ex = Experiment()
 ex.observers.append(get_observer())

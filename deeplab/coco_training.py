@@ -10,16 +10,16 @@ import time
 from collections import OrderedDict
 from shutil import make_archive, copyfile
 
-import semseg_density.data.coco_segmentation
-from semseg_density.data.tfds_to_torch import TFDataIterableDataset
-from semseg_density.data.augmentation import augmentation
-from semseg_density.data.images import convert_img_to_float
-from semseg_density.model.refinenet import rf_lw50, rf_lw101, get_encoder_and_decoder_params
-from semseg_density.lr_scheduler import LRScheduler
-from semseg_density.segmentation_metrics import SegmentationMetric
-from semseg_density.losses import MixSoftmaxCrossEntropyLoss, MaxLogitLoss
-from semseg_density.settings import TMPDIR
-from semseg_density.sacred_utils import get_observer
+import semsegcluster.data.coco_segmentation
+from semsegcluster.data.tfds_to_torch import TFDataIterableDataset
+from semsegcluster.data.augmentation import augmentation
+from semsegcluster.data.images import convert_img_to_float
+from semsegcluster.model.refinenet import rf_lw50, rf_lw101, get_encoder_and_decoder_params
+from semsegcluster.lr_scheduler import LRScheduler
+from semsegcluster.segmentation_metrics import SegmentationMetric
+from semsegcluster.losses import MixSoftmaxCrossEntropyLoss, MaxLogitLoss
+from semsegcluster.settings import TMPDIR
+from semsegcluster.sacred_utils import get_observer
 
 ex = Experiment()
 ex.observers.append(get_observer())

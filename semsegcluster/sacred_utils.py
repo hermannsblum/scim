@@ -2,7 +2,7 @@ from sacred.observers import MongoObserver, FileStorageObserver
 import incense
 import torch
 import os
-import semseg_density.settings as settings
+import semsegcluster.settings as settings
 
 
 def get_observer():

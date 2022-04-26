@@ -30,12 +30,12 @@ from collections import OrderedDict
 from shutil import make_archive, copyfile
 import hnswlib
 
-import semseg_density.data.scannet
-from semseg_density.data.images import convert_img_to_float
-from semseg_density.segmentation_metrics import SegmentationMetric
-from semseg_density.settings import TMPDIR, EXP_OUT
-from semseg_density.eval import measure_from_confusion_matrix
-from semseg_density.sacred_utils import get_observer, get_checkpoint
+import semsegcluster.data.scannet
+from semsegcluster.data.images import convert_img_to_float
+from semsegcluster.segmentation_metrics import SegmentationMetric
+from semsegcluster.settings import TMPDIR, EXP_OUT
+from semsegcluster.eval import measure_from_confusion_matrix
+from semsegcluster.sacred_utils import get_observer, get_checkpoint
 
 from deeplab.sampling import get_deeplab_embeddings, get_deeplab, get_sampling_idx
 
@@ -209,7 +209,7 @@ def clustering_based_inference(features, clustering, subset, pretrained_model,
                               interpolation=cv2.INTER_NEAREST)
     # save output
     name = blob['name'].numpy().decode()
-    np.save(os.path.join(directory, f'{name}_hdbscan{_run._id}.npy'),
+    np.save(os.path.join(directory, f'{name}_segvox{_run._id}.npy'),
             cluster_pred)
 
 

@@ -11,16 +11,16 @@ import time
 from collections import OrderedDict
 from shutil import make_archive, copyfile
 
-import semseg_density.data.scannet
-from semseg_density.data.nyu_depth_v2 import TRAINING_LABEL_NAMES
-from semseg_density.data.tfds_to_torch import FilteredTFDataIterableDataset
-from semseg_density.data.augmentation import augmentation
-from semseg_density.data.images import convert_img_to_float
-from semseg_density.lr_scheduler import LRScheduler
-from semseg_density.segmentation_metrics import SegmentationMetric
-from semseg_density.losses import MixSoftmaxCrossEntropyLoss
-from semseg_density.settings import TMPDIR
-from semseg_density.sacred_utils import get_observer, get_checkpoint
+import semsegcluster.data.scannet
+from semsegcluster.data.nyu_depth_v2 import TRAINING_LABEL_NAMES
+from semsegcluster.data.tfds_to_torch import FilteredTFDataIterableDataset
+from semsegcluster.data.augmentation import augmentation
+from semsegcluster.data.images import convert_img_to_float
+from semsegcluster.lr_scheduler import LRScheduler
+from semsegcluster.segmentation_metrics import SegmentationMetric
+from semsegcluster.losses import MixSoftmaxCrossEntropyLoss
+from semsegcluster.settings import TMPDIR
+from semsegcluster.sacred_utils import get_observer, get_checkpoint
 
 ex = Experiment()
 ex.observers.append(get_observer())

@@ -1,6 +1,6 @@
 import tensorflow as tf
 
-from semseg_density.data.images import convert_img_to_float
+from semsegcluster.data.images import convert_img_to_float
 
 #@tf.function
 def augmentation(image, label, random_crop=None):

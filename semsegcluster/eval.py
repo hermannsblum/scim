@@ -7,7 +7,7 @@ import os
 from tqdm import tqdm
 from joblib import Memory
 
-from semseg_density.settings import EXP_OUT
+from semsegcluster.settings import EXP_OUT
 
 memory = Memory(EXP_OUT)
 
@@ -119,6 +119,9 @@ def get_measurements(path, ignore_other=True):
     pred = np.load(os.path.join(directory, f'{frame}_{method}.npy')).squeeze()
     if not np.issubdtype(pred.dtype, np.integer) or pred.dtype == np.uint32:
       print(f'Ignoring {method} because data is not integer type.')
+      continue
+    if not pred.shape[0] == 480:
+      print(f'Ignoring {method} because shape {pred.shape} does not match.')
       continue
     measurements[method] = get_measurements_of_method(path,
                                                       method,
