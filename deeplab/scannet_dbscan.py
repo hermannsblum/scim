@@ -149,6 +149,7 @@ def distance_preprocessing(subset, shard, subsample, device, pretrained_model,
     inlier_dist = out['distances'][np.logical_and(out['inlier_pair'],
                                                   out['same_class_pair'])]
     scale_idx = int(0.9 * inlier_dist.shape[0])
+    print(f"{inlier_dist.shape=}, {scale_idx=}")
     scale_value = np.partition(inlier_dist, scale_idx)[scale_idx]
     #_run.info['scale_value'] = scale_value
     out['distances'] /= scale_value
@@ -214,12 +215,14 @@ hdbscan_dimensions = [
 @ex.capture
 def get_hdbscan(apply_scaling, cluster_selection_method, min_cluster_size,
                 min_samples):
-  out = distance_preprocessing(apply_scaling=apply_scaling)
+  adjacency = distance_preprocessing(apply_scaling=apply_scaling)['adjacency']
   clusterer = hdbscan.HDBSCAN(min_cluster_size=int(min_cluster_size),
                               min_samples=int(min_samples),
                               cluster_selection_method=cluster_selection_method,
                               metric='precomputed')
-  out['clustering'] = clusterer.fit_predict(out['adjacency'])
+  clustering= clusterer.fit_predict(adjacency)
+  out = distance_preprocessing(apply_scaling=apply_scaling)
+  out['clustering'] = clustering
   return out
 
 
@@ -246,12 +249,10 @@ dbscan_dimensions = [
 
 @ex.capture
 def get_dbscan(apply_scaling, eps, min_samples):
-  out = distance_preprocessing(apply_scaling=apply_scaling)
+  adjacency = distance_preprocessing(apply_scaling=apply_scaling)['adjacency']
   clusterer = sklearn.cluster.DBSCAN(eps=eps,
                                      min_samples=min_samples,
                                      metric='precomputed')
-  adjacency = out['adjacency']
-  del out
   print('stating clustering')
   clustering = clusterer.fit_predict(adjacency)
   out = distance_preprocessing(apply_scaling=apply_scaling)
@@ -304,7 +305,6 @@ def best_hdbscan(
   result = gp_minimize(func=score_hdbscan,
                        dimensions=hdbscan_dimensions,
                        callback=[
-                           DeltaYStopper(0.01),
                            timer,
                        ],
                        n_calls=n_calls,
@@ -328,7 +328,6 @@ def best_dbscan(_run, n_calls):
   result = gp_minimize(func=score_dbscan,
                        dimensions=dbscan_dimensions,
                        callback=[
-                           DeltaYStopper(delta=0.002, n_minimum=100, n_best=10),
                            timer,
                        ],
                        n_calls=n_calls,

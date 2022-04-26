@@ -21,7 +21,6 @@ import hdbscan
 from skopt.space import Real, Integer, Categorical
 from skopt import gp_minimize
 from skopt.utils import use_named_args
-import markov_clustering as mc
 
 tf.config.set_visible_devices([], 'GPU')
 import os
@@ -111,7 +110,7 @@ def get_distances(subset, shard, subsample, device, pretrained_model,
   return out
 
 
-def distance_preprocessing(imagenet_weight):
+def distance_preprocessing(imagenet_weight, same_voxel_close):
   out = get_distances()
   print('Loaded all features', flush=True)
   # clear up memory
@@ -127,9 +126,13 @@ def distance_preprocessing(imagenet_weight):
     scale_value = np.partition(inlier_dist, scale_idx)[scale_idx]
     #_run.info['scale_value'] = scale_value
     out[k] /= scale_value
-  adjacency = sp.spatial.distance.squareform(
-      (1 - imagenet_weight) * out['distances'] +
-      imagenet_weight * out['imagenet_distances'])
+  merged = ((1 - imagenet_weight) * out['distances'] +
+            imagenet_weight * out['imagenet_distances'])
+  if same_voxel_close is not None:
+    # now set distances between same voxel observations to 0.5
+    merged[out['same_voxel_pair']] = float(same_voxel_close) * merged[
+        out['same_voxel_pair']]
+  adjacency = sp.spatial.distance.squareform(merged)
   out = get_distances()
   return {
       'features': out['features'],
@@ -145,7 +148,7 @@ def clustering_based_inference(features, imagenet_features, clustering, subset,
                                pretrained_model, feature_name,
                                expected_feature_shape, imagenet_feature_name,
                                device, imagenet_weight, interpolate_imagenet,
-                               normalize, _run, postfix):
+                               normalize, _run):
   # set up NN index to find closest clustered sample
   dl_knn = hnswlib.Index(space='l2', dim=features.shape[-1])
   dl_knn.init_index(max_elements=features.shape[0],
@@ -209,22 +212,23 @@ def clustering_based_inference(features, imagenet_features, clustering, subset,
                               interpolation=cv2.INTER_NEAREST)
     # save output
     name = blob['name'].numpy().decode()
-    np.save(
-        os.path.join(directory, f'{name}_segandimgnet{postfix}{_run._id}.npy'),
-        cluster_pred)
+    np.save(os.path.join(directory, f'{name}_segimgnetvoxel{_run._id}.npy'),
+            cluster_pred)
 
 
 hdbscan_dimensions = [
     Integer(name='min_cluster_size', low=2, high=100),
     Integer(name='min_samples', low=1, high=30),
-    Real(name='imagenet_weight', low=0, high=1)
+    Real(name='imagenet_weight', low=0, high=1),
+    Real(name='same_voxel_close', low=0, high=1),
 ]
 
 
 @ex.capture
 def get_hdbscan(cluster_selection_method, min_cluster_size, min_samples,
-                imagenet_weight):
-  out = distance_preprocessing(imagenet_weight)
+                imagenet_weight, same_voxel_close):
+  out = distance_preprocessing(imagenet_weight=imagenet_weight,
+                               same_voxel_close=same_voxel_close)
   clusterer = hdbscan.HDBSCAN(min_cluster_size=int(min_cluster_size),
                               min_samples=int(min_samples),
                               cluster_selection_method=cluster_selection_method,
@@ -235,8 +239,10 @@ def get_hdbscan(cluster_selection_method, min_cluster_size, min_samples,
 
 
 @use_named_args(dimensions=hdbscan_dimensions)
-def score_hdbscan(imagenet_weight, min_cluster_size, min_samples):
+def score_hdbscan(imagenet_weight, min_cluster_size, min_samples,
+                  same_voxel_close):
   out = get_hdbscan(imagenet_weight=float(imagenet_weight),
+                    same_voxel_close=float(same_voxel_close),
                     min_cluster_size=int(min_cluster_size),
                     min_samples=int(min_samples))
   out['clustering'][out['clustering'] == -1] = 39
@@ -258,13 +264,15 @@ def score_hdbscan(imagenet_weight, min_cluster_size, min_samples):
 dbscan_dimensions = [
     Real(name='eps', low=0.1, high=3),
     Integer(name='min_samples', low=1, high=40),
-    Real(name='imagenet_weight', low=0, high=1)
+    Real(name='imagenet_weight', low=0, high=1),
+    Real(name='same_voxel_close', low=0, high=1),
 ]
 
 
 @ex.capture
-def get_dbscan(eps, min_samples, imagenet_weight):
-  out = distance_preprocessing(imagenet_weight=imagenet_weight)
+def get_dbscan(eps, min_samples, imagenet_weight, same_voxel_close):
+  out = distance_preprocessing(imagenet_weight=imagenet_weight,
+                               same_voxel_close=same_voxel_close)
   adjacency = out['adjacency']
   # del out
   clusterer = sklearn.cluster.DBSCAN(eps=eps,
@@ -277,58 +285,11 @@ def get_dbscan(eps, min_samples, imagenet_weight):
 
 
 @use_named_args(dimensions=dbscan_dimensions)
-def score_dbscan(eps, min_samples, imagenet_weight):
+def score_dbscan(eps, min_samples, imagenet_weight, same_voxel_close):
   out = get_dbscan(eps=eps,
                    min_samples=min_samples,
+                   same_voxel_close=same_voxel_close,
                    imagenet_weight=imagenet_weight)
-  out['clustering'][out['clustering'] == -1] = 39
-  # cluster numbers larger than 200 are ignored in the confusion  matrix
-  out['clustering'][out['clustering'] > 200] = 39
-  cm = sklearn.metrics.confusion_matrix(
-      out['prediction'][np.logical_and(out['uncertainty'] < -3,
-                                       out['prediction'] != 255)],
-      out['clustering'][np.logical_and(out['uncertainty'] < -3,
-                                       out['prediction'] != 255)],
-      labels=list(range(200)))
-  measures = measure_from_confusion_matrix(cm.astype(np.uint32))
-  miou = measures['assigned_miou']
-  vscore = measures['v_score']
-  print(f'{miou=:.3f}, {vscore=:.3f}')
-  return -1.0 * (0.0 if np.isnan(miou) else miou)
-
-
-mcl_dimensions = [
-    Real(name='eta', low=0.1, high=20),
-    Real(name='inflation', low=1.2, high=2.5),
-    Real(name='imagenet_weight', low=0, high=1)
-]
-
-
-@ex.capture
-def get_mcl(eta, inflation, imagenet_weight):
-  out = distance_preprocessing(imagenet_weight=imagenet_weight)
-  adjacency = out['adjacency']
-  del out
-  # add their activation function
-  adjacency = np.exp(-1.0 * eta * adjacency)
-  # now run the clustering
-  result = mc.run_mcl(adjacency / adjacency.mean(),
-                      inflation=inflation,
-                      verbose=True)
-  clusters = mc.get_clusters(result)
-  print(f'Fit clustering to {len(clusters)} clusters', flush=True)
-  out = distance_preprocessing(imagenet_weight=imagenet_weight)
-  clustering = -1 * np.ones(out['features'].shape[0], dtype=int)
-  for i, cluster in enumerate(clusters):
-    for node in cluster:
-      clustering[node] = i
-  out['clustering'] = clustering
-  return out
-
-
-@use_named_args(dimensions=mcl_dimensions)
-def score_mcl(eta, inflation, imagenet_weight):
-  out = get_mcl(eta=eta, inflation=inflation, imagenet_weight=imagenet_weight)
   out['clustering'][out['clustering'] == -1] = 39
   # cluster numbers larger than 200 are ignored in the confusion  matrix
   out['clustering'][out['clustering'] > 200] = 39
@@ -374,14 +335,15 @@ def best_hdbscan(
   _run.info['min_cluster_size'] = result.x[0]
   _run.info['min_samples'] = result.x[1]
   _run.info['imagenet_weight'] = result.x[2]
+  _run.info['same_voxel_close'] = result.x[3]
   # run clustering again with best parameters
   out = get_hdbscan(min_cluster_size=result.x[0],
                     min_samples=result.x[1],
-                    imagenet_weight=result.x[2])
+                    imagenet_weight=result.x[2],
+                    same_voxel_close=result.x[3])
   clustering_based_inference(features=out['features'],
                              imagenet_features=out['imagenet_features'],
                              imagenet_weight=result.x[2],
-                             postfix='hdbscan',
                              clustering=out['clustering'])
 
 
@@ -399,39 +361,15 @@ def best_dbscan(
   _run.info['eps'] = result.x[0]
   _run.info['min_samples'] = result.x[1]
   _run.info['imagenet_weight'] = result.x[2]
+  _run.info['same_voxel_close'] = result.x[3]
   # run clustering again with best parameters
   out = get_dbscan(eps=result.x[0],
                    min_samples=result.x[1],
-                   imagenet_weight=result.x[2])
+                   imagenet_weight=result.x[2],
+                   same_voxel_close=result.x[3])
   clustering_based_inference(features=out['features'],
                              imagenet_features=out['imagenet_features'],
                              imagenet_weight=result.x[2],
-                             postfix='dbscan',
-                             clustering=out['clustering'])
-
-
-@ex.command
-def best_mcl(
-    _run,
-    n_calls,
-):
-  # run optimisation
-  result = gp_minimize(func=score_mcl,
-                       dimensions=mcl_dimensions,
-                       n_calls=n_calls,
-                       random_state=4)
-  _run.info['best_miou'] = -result.fun
-  _run.info['eta'] = result.x[0]
-  _run.info['inflation'] = result.x[1]
-  _run.info['imagenet_weight'] = result.x[2]
-  # run clustering again with best parameters
-  out = get_mcl(eta=result.x[0],
-                inflation=result.x[1],
-                imagenet_weight=result.x[2])
-  clustering_based_inference(features=out['features'],
-                             imagenet_features=out['imagenet_features'],
-                             imagenet_weight=result.x[2],
-                             postfix='mcl',
                              clustering=out['clustering'])
 
 

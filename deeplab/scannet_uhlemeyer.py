@@ -41,11 +41,12 @@ from deeplab.sampling import get_resnet
 ex = Experiment()
 ex.observers.append(get_observer())
 
+persistent = Memory(EXP_OUT)
 memory = Memory("/tmp")
 
 
 @ex.capture
-@memory.cache
+@persistent.cache
 def get_connected_components(subset, pretrained_model, pred_name, uncert_name,
                              uncertainty_threshold):
   data = tfds.load(f'scan_net/{subset}', split='validation')

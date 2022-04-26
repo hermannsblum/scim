@@ -47,7 +47,7 @@ memory = Memory("/tmp")
 @ex.capture
 @memory.cache
 def get_nakajima_distances(subset, shard, subsample, device, pretrained_model,
-                           feature_name, pred_name, uncert_name,
+                           feature_name, pred_name, uncert_name, expected_feature_shape,
                            uncertainty_threshold):
   out = get_distances(subset=subset,
                       shard=shard,
@@ -56,6 +56,7 @@ def get_nakajima_distances(subset, shard, subsample, device, pretrained_model,
                       pretrained_model=pretrained_model,
                       uncertainty_threshold=uncertainty_threshold,
                       feature_name=feature_name,
+                      expected_feature_shape=expected_feature_shape,
                       pred_name=pred_name,
                       uncert_name=uncert_name,
                       normalize=False)
@@ -78,9 +79,9 @@ def nakajima_inference(weighted_features, clustering, subset, pretrained_model,
                  random_seed=100)
   knn.add_items(weighted_features, clustering)
   data = tfds.load(f'scan_net/{subset}', split='validation')
-  model, hooks = get_model(pretrained_model=pretrained_model,
-                           feature_name=feature_name,
-                           device=device)
+  model, hooks = get_deeplab(pretrained_model=pretrained_model,
+                             feature_name=feature_name,
+                             device=device)
   # make sure the directory exists
   _, pretrained_id = get_checkpoint(pretrained_model)
   directory = os.path.join(EXP_OUT, 'scannet_inference', subset, pretrained_id)
@@ -129,24 +130,24 @@ mcl_nakajima_dimensions = [
 @ex.capture
 def get_mcl_nakajima(eta, inflation):
   out = get_nakajima_distances()
-  del out['inlier_pair']
-  del out['same_class_pair']
-  del out['same_voxel_pair']
-  del out['voxels']
+  n_points =  out['features'].shape[0]
+  distances = out['distances']
+  del out
   # add their activation function
-  out['distances'] = np.exp(-1.0 * eta * out['distances'])
+  distances = np.exp(-1.0 * eta * distances)
   # put into square form
-  adjacency = sp.spatial.distance.squareform(out.pop('distances'))
+  adjacency = sp.spatial.distance.squareform(distances)
   # now run the clustering
   result = mc.run_mcl(adjacency / adjacency.mean(),
                       inflation=inflation,
                       verbose=True)
   clusters = mc.get_clusters(result)
   print(f'Fit clustering to {len(clusters)} clusters', flush=True)
-  clustering = -1 * np.ones(out['features'].shape[0], dtype=int)
+  clustering = -1 * np.ones(n_points, dtype=int)
   for i, cluster in enumerate(clusters):
     for node in cluster:
       clustering[node] = i
+  out = get_nakajima_distances()
   return {
       'features': out['features'],
       'clustering': clustering,
@@ -174,6 +175,9 @@ ex.add_config(subsample=100,
               shard=5,
               device='cuda',
               uncertainty_threshold=-3,
+              pred_name='pseudolabel-pred',
+              uncert_name='pseudolabel-maxlogit-pp',
+              expected_feature_shape=[60, 80],
               feature_name='classifier.2',
               ignore_other=True)
 

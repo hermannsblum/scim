@@ -38,8 +38,8 @@ from semsegcluster.eval import measure_from_confusion_matrix
 from semsegcluster.sacred_utils import get_observer, get_checkpoint
 
 from deeplab.sampling import (get_deeplab_embeddings, get_deeplab,
-                              get_imagenet_embeddings, get_sampling_idx,
-                              get_resnet)
+                              get_geometric_features, get_sampling_idx,
+                              get_resnet, get_imagenet_embeddings)
 
 ex = Experiment()
 ex.observers.append(get_observer())
@@ -50,14 +50,20 @@ memory = Memory("/tmp")
 @ex.capture
 @memory.cache
 def get_distances(subset, shard, subsample, device, pretrained_model,
-                  feature_name, imagenet_feature_name, pred_name, uncert_name,
-                  expected_feature_shape, uncertainty_threshold, normalize,
-                  interpolate_imagenet):
+                  feature_name, imagenet_feature_name, interpolate_imagenet,
+                  pred_name, uncert_name, expected_feature_shape,
+                  uncertainty_threshold, normalize):
   out = get_sampling_idx(subset=subset,
                          shard=shard,
                          subsample=subsample,
                          expected_feature_shape=expected_feature_shape,
                          pretrained_model=pretrained_model)
+  out.update(
+      get_geometric_features(subset=subset,
+                             shard=shard,
+                             subsample=subsample,
+                             pretrained_model=pretrained_model,
+                             expected_feature_shape=expected_feature_shape))
   out.update(
       get_deeplab_embeddings(subset=subset,
                              shard=shard,
@@ -77,6 +83,11 @@ def get_distances(subset, shard, subsample, device, pretrained_model,
                               expected_feature_shape=expected_feature_shape,
                               interpolate=interpolate_imagenet,
                               feature_name=imagenet_feature_name))
+  # removing points without geometric feature (ie no NANs)
+  has_geometry = np.isfinite(out['geometric_features'].mean(1))
+  del out['sampling_idx']
+  for k in out:
+    out[k] = out[k][has_geometry]
   if normalize:
     out['features'] = sklearn.preprocessing.normalize(out['features'])
     out['imagenet_features'] = sklearn.preprocessing.normalize(
@@ -85,6 +96,8 @@ def get_distances(subset, shard, subsample, device, pretrained_model,
                                                metric='euclidean')
   out['imagenet_distances'] = sp.spatial.distance.pdist(
       out['imagenet_features'], metric='euclidean')
+  out['geometric_distances'] = sp.spatial.distance.pdist(
+      out['geometric_features'], metric='euclidean')
   out['same_class_pair'] = np.zeros_like(out['distances'], dtype=bool)
   m = out['features'].shape[0]
   for j in range(m):
@@ -98,28 +111,19 @@ def get_distances(subset, shard, subsample, device, pretrained_model,
     for i in range(j):
       out['inlier_pair'][m * i + j - ((i + 2) * (i + 1)) // 2] = np.logical_and(
           is_inlier[i], is_inlier[j])
-  del is_inlier
-  out['same_voxel_pair'] = np.zeros_like(out['distances'], dtype=bool)
-  for j in range(m):
-    if out['voxels'][j] == 0:
-      continue
-    for i in range(j):
-      if out['voxels'][i] == 0:
-        continue
-      out['same_voxel_pair'][m * i + j - (
-          (i + 2) * (i + 1)) // 2] = out['voxels'][i] == out['voxels'][j]
   return out
 
 
-def distance_preprocessing(imagenet_weight):
+def distance_preprocessing(geometric_weight, imagenet_weight):
   out = get_distances()
   print('Loaded all features', flush=True)
   # clear up memory
-  del out['features']
-  del out['imagenet_features']
-  del out['voxels']
+  for k in list(out.keys()):
+    if k not in ('distances', 'geometric_distances', 'imagenet_distances',
+                 'inlier_pair', 'same_class_pair'):
+      del out[k]
   # now generate distance matrix
-  for k in ['distances', 'imagenet_distances']:
+  for k in ['distances', 'geometric_distances', 'imagenet_distances']:
     # first scale such that 90% of inliers of same class are below 1
     inlier_dist = out[k][np.logical_and(out['inlier_pair'],
                                         out['same_class_pair'])]
@@ -128,11 +132,13 @@ def distance_preprocessing(imagenet_weight):
     #_run.info['scale_value'] = scale_value
     out[k] /= scale_value
   adjacency = sp.spatial.distance.squareform(
-      (1 - imagenet_weight) * out['distances'] +
+      (1 - geometric_weight - imagenet_weight) * out['distances'] +
+      geometric_weight * out['geometric_distances'] +
       imagenet_weight * out['imagenet_distances'])
   out = get_distances()
   return {
       'features': out['features'],
+      'geometric_features': out['geometric_features'],
       'imagenet_features': out['imagenet_features'],
       'adjacency': adjacency,
       'prediction': out['prediction'],
@@ -141,10 +147,11 @@ def distance_preprocessing(imagenet_weight):
 
 
 @ex.capture
-def clustering_based_inference(features, imagenet_features, clustering, subset,
-                               pretrained_model, feature_name,
-                               expected_feature_shape, imagenet_feature_name,
-                               device, imagenet_weight, interpolate_imagenet,
+def clustering_based_inference(features, geometric_features, imagenet_features,
+                               clustering, subset, pretrained_model,
+                               feature_name, imagenet_feature_name,
+                               interpolate_imagenet, expected_feature_shape,
+                               device, geometric_weight, imagenet_weight,
                                normalize, _run, postfix):
   # set up NN index to find closest clustered sample
   dl_knn = hnswlib.Index(space='l2', dim=features.shape[-1])
@@ -160,6 +167,13 @@ def clustering_based_inference(features, imagenet_features, clustering, subset,
                     ef_construction=200,
                     random_seed=100)
   in_knn.add_items(imagenet_features, clustering)
+  # and for geometric features
+  geo_knn = hnswlib.Index(space='l2', dim=geometric_features.shape[-1])
+  geo_knn.init_index(max_elements=geometric_features.shape[0],
+                     M=64,
+                     ef_construction=200,
+                     random_seed=100)
+  geo_knn.add_items(geometric_features, clustering)
   data = tfds.load(f'scan_net/{subset}', split='validation')
   dl_model, dl_hooks = get_deeplab(pretrained_model=pretrained_model,
                                    feature_name=feature_name,
@@ -170,7 +184,12 @@ def clustering_based_inference(features, imagenet_features, clustering, subset,
   _, pretrained_id = get_checkpoint(pretrained_model)
   directory = os.path.join(EXP_OUT, 'scannet_inference', subset, pretrained_id)
   os.makedirs(directory, exist_ok=True)
+  # load geometric features
+  with open(os.path.join(directory, 'blockid_to_descriptor.pkl'), 'rb') as f:
+    blockid_to_descriptor = pickle.load(f)
+  feature_voxels = np.array(list(blockid_to_descriptor.keys()))
   for blob in tqdm(data):
+    frame = blob['name'].numpy().decode()
     image = convert_img_to_float(blob['image'])
     # move channel from last to 2nd
     image = tf.transpose(image, perm=[2, 0, 1])[tf.newaxis]
@@ -201,42 +220,88 @@ def clustering_based_inference(features, imagenet_features, clustering, subset,
     in_pred, in_distance = in_knn.knn_query(imagenet_features.reshape(
         (-1, imagenet_features.shape[-1])),
                                             k=1)
-    del imagenet_features
-    cluster_pred = np.where((dl_distance / (1 - imagenet_weight)) <
-                            (in_distance / imagenet_weight), dl_pred, in_pred)
+    del imagenet_features, image
+    try:
+      voxel = np.load(os.path.join(
+          directory,
+          f'{frame}_pseudolabel-voxels.npy')).squeeze().astype(np.int32)
+      # reshapes to have array <feature_width * feature_height, list of voxels>
+      voxel = voxel.reshape((expected_feature_shape[0],
+                             voxel.shape[0] // expected_feature_shape[0],
+                             expected_feature_shape[1],
+                             voxel.shape[1] // expected_feature_shape[1]))
+      voxel = np.swapaxes(voxel, 1, 2).reshape(
+          (expected_feature_shape[0] * expected_feature_shape[1], -1))
+      has_feature = np.isin(voxel, feature_voxels)
+      # out of the possible voxels, pick one that has a feature
+      voxel = voxel[range(voxel.shape[0]),
+                    np.argmax(has_feature, axis=-1)].flatten()
+      has_feature = has_feature.max(-1).flatten()
+      geometric_features = []
+      for v in voxel:
+        if v in blockid_to_descriptor:
+          geometric_features.append(blockid_to_descriptor[v])
+        else:
+          geometric_features.append(np.array([np.nan for _ in range(32)]))
+      del voxel
+      geometric_features = np.stack(geometric_features, axis=0)
+      geo_pred, geo_distance = geo_knn.knn_query(geometric_features, k=1)
+      geo_distance[np.logical_not(has_feature)] = 1e10
+      del has_feature, geometric_features
+      in_distance = in_distance / imagenet_weight
+      geo_distance = geo_distance / geometric_weight
+      cluster_pred = np.where(in_distance < geo_distance, in_pred, geo_pred)
+      cluster_dist = np.where(in_distance < geo_distance, in_distance,
+                              geo_distance)
+      del in_pred, in_distance, geo_pred, geo_distance
+    except FileNotFoundError:
+      cluster_pred = in_pred
+      cluster_dist = in_distance
+    dl_weight = max(1e-10, 1 - imagenet_weight - geometric_weight)
+    cluster_pred = np.where((dl_distance / dl_weight) < cluster_dist, dl_pred,
+                            cluster_pred)
+    del cluster_dist, dl_pred, dl_distance
     cluster_pred = cluster_pred.reshape((feature_shape[1], feature_shape[2]))
     cluster_pred = cv2.resize(cluster_pred, (640, 480),
                               interpolation=cv2.INTER_NEAREST)
     # save output
     name = blob['name'].numpy().decode()
-    np.save(
-        os.path.join(directory, f'{name}_segandimgnet{postfix}{_run._id}.npy'),
-        cluster_pred)
+    np.save(os.path.join(directory, f'{name}_seggeoimg{postfix}{_run._id}.npy'),
+            cluster_pred)
 
 
 hdbscan_dimensions = [
     Integer(name='min_cluster_size', low=2, high=100),
     Integer(name='min_samples', low=1, high=30),
-    Real(name='imagenet_weight', low=0, high=1)
+    Real(name='geometric_weight', low=0, high=1),
+    Real(name='imagenet_weight', low=0, high=1),
 ]
 
 
 @ex.capture
 def get_hdbscan(cluster_selection_method, min_cluster_size, min_samples,
-                imagenet_weight):
-  out = distance_preprocessing(imagenet_weight)
+                geometric_weight, imagenet_weight):
+  adjacency = distance_preprocessing(
+      geometric_weight=geometric_weight,
+      imagenet_weight=imagenet_weight)['adjacency']
   clusterer = hdbscan.HDBSCAN(min_cluster_size=int(min_cluster_size),
                               min_samples=int(min_samples),
                               cluster_selection_method=cluster_selection_method,
                               metric='precomputed')
-  clustering = clusterer.fit_predict(out['adjacency'])
+  clustering = clusterer.fit_predict(adjacency)
+  out = distance_preprocessing(geometric_weight=geometric_weight,
+                               imagenet_weight=imagenet_weight)
   out['clustering'] = clustering
   return out
 
 
 @use_named_args(dimensions=hdbscan_dimensions)
-def score_hdbscan(imagenet_weight, min_cluster_size, min_samples):
-  out = get_hdbscan(imagenet_weight=float(imagenet_weight),
+def score_hdbscan(geometric_weight, imagenet_weight, min_cluster_size,
+                  min_samples):
+  if geometric_weight + imagenet_weight >= 1:
+    return 1.
+  out = get_hdbscan(geometric_weight=float(geometric_weight),
+                    imagenet_weight=float(imagenet_weight),
                     min_cluster_size=int(min_cluster_size),
                     min_samples=int(min_samples))
   out['clustering'][out['clustering'] == -1] = 39
@@ -256,31 +321,35 @@ def score_hdbscan(imagenet_weight, min_cluster_size, min_samples):
 
 
 dbscan_dimensions = [
-    Real(name='eps', low=0.1, high=3),
+    Real(name='eps', low=0.1, high=1),
     Integer(name='min_samples', low=1, high=40),
-    Real(name='imagenet_weight', low=0, high=1)
+    Real(name='geometric_weight', low=0, high=1),
+    Real(name='imagenet_weight', low=0, high=1),
 ]
 
 
 @ex.capture
-def get_dbscan(eps, min_samples, imagenet_weight):
-  out = distance_preprocessing(imagenet_weight=imagenet_weight)
-  adjacency = out['adjacency']
-  # del out
+def get_dbscan(eps, min_samples, geometric_weight, imagenet_weight):
+  adjacency = distance_preprocessing(
+      geometric_weight=geometric_weight,
+      imagenet_weight=imagenet_weight)['adjacency']
   clusterer = sklearn.cluster.DBSCAN(eps=eps,
                                      min_samples=min_samples,
                                      metric='precomputed')
   clustering = clusterer.fit_predict(adjacency)
-  # out = distance_preprocessing(imagenet_weight=imagenet_weight)
+  out = distance_preprocessing(geometric_weight=geometric_weight,
+                               imagenet_weight=imagenet_weight)
   out['clustering'] = clustering
   return out
 
 
 @use_named_args(dimensions=dbscan_dimensions)
-def score_dbscan(eps, min_samples, imagenet_weight):
+def score_dbscan(eps, min_samples, geometric_weight):
+  if geometric_weight + imagenet_weight >= 1:
+    return 1.
   out = get_dbscan(eps=eps,
                    min_samples=min_samples,
-                   imagenet_weight=imagenet_weight)
+                   geometric_weight=imagenet_weight)
   out['clustering'][out['clustering'] == -1] = 39
   # cluster numbers larger than 200 are ignored in the confusion  matrix
   out['clustering'][out['clustering'] > 200] = 39
@@ -300,13 +369,15 @@ def score_dbscan(eps, min_samples, imagenet_weight):
 mcl_dimensions = [
     Real(name='eta', low=0.1, high=20),
     Real(name='inflation', low=1.2, high=2.5),
-    Real(name='imagenet_weight', low=0, high=1)
+    Real(name='geometric_weight', low=0, high=1),
+    Real(name='imagenet_weight', low=0, high=1),
 ]
 
 
 @ex.capture
-def get_mcl(eta, inflation, imagenet_weight):
-  out = distance_preprocessing(imagenet_weight=imagenet_weight)
+def get_mcl(eta, inflation, geometric_weight, imagenet_weight):
+  out = distance_preprocessing(geometric_weight=geometric_weight,
+                               imagenet_weight=imagenet_weight)
   adjacency = out['adjacency']
   del out
   # add their activation function
@@ -317,7 +388,7 @@ def get_mcl(eta, inflation, imagenet_weight):
                       verbose=True)
   clusters = mc.get_clusters(result)
   print(f'Fit clustering to {len(clusters)} clusters', flush=True)
-  out = distance_preprocessing(imagenet_weight=imagenet_weight)
+  out = distance_preprocessing(geometric_weight=imagenet_weight)
   clustering = -1 * np.ones(out['features'].shape[0], dtype=int)
   for i, cluster in enumerate(clusters):
     for node in cluster:
@@ -327,8 +398,10 @@ def get_mcl(eta, inflation, imagenet_weight):
 
 
 @use_named_args(dimensions=mcl_dimensions)
-def score_mcl(eta, inflation, imagenet_weight):
-  out = get_mcl(eta=eta, inflation=inflation, imagenet_weight=imagenet_weight)
+def score_mcl(eta, inflation, geometric_weight):
+  if geometric_weight + imagenet_weight >= 1:
+    return 1.
+  out = get_mcl(eta=eta, inflation=inflation, geometric_weight=imagenet_weight)
   out['clustering'][out['clustering'] == -1] = 39
   # cluster numbers larger than 200 are ignored in the confusion  matrix
   out['clustering'][out['clustering'] > 200] = 39
@@ -353,7 +426,6 @@ ex.add_config(subsample=100,
               interpolate_imagenet=True,
               expected_feature_shape=[60, 80],
               ignore_other=True,
-              use_hdbscan=False,
               uncertainty_threshold=-3,
               normalize=True,
               pred_name='pseudolabel-pred',
@@ -373,14 +445,18 @@ def best_hdbscan(
   _run.info['best_miou'] = -result.fun
   _run.info['min_cluster_size'] = result.x[0]
   _run.info['min_samples'] = result.x[1]
-  _run.info['imagenet_weight'] = result.x[2]
+  _run.info['geometric_weight'] = result.x[2]
+  _run.info['imagenet_weight'] = result.x[3]
   # run clustering again with best parameters
   out = get_hdbscan(min_cluster_size=result.x[0],
                     min_samples=result.x[1],
-                    imagenet_weight=result.x[2])
+                    geometric_weight=result.x[2],
+                    imagenet_weight=result.x[3])
   clustering_based_inference(features=out['features'],
+                             geometric_features=out['geometric_features'],
                              imagenet_features=out['imagenet_features'],
-                             imagenet_weight=result.x[2],
+                             geometric_weight=result.x[2],
+                             imagenet_weight=result.x[3],
                              postfix='hdbscan',
                              clustering=out['clustering'])
 
@@ -398,14 +474,17 @@ def best_dbscan(
   _run.info['best_miou'] = -result.fun
   _run.info['eps'] = result.x[0]
   _run.info['min_samples'] = result.x[1]
-  _run.info['imagenet_weight'] = result.x[2]
+  _run.info['geometric_weight'] = result.x[2]
+  _run.info['imagenet_weight'] = result.x[3]
   # run clustering again with best parameters
   out = get_dbscan(eps=result.x[0],
                    min_samples=result.x[1],
-                   imagenet_weight=result.x[2])
+                   geometric_weight=result.x[2])
   clustering_based_inference(features=out['features'],
+                             geometric_features=out['geometric_features'],
                              imagenet_features=out['imagenet_features'],
-                             imagenet_weight=result.x[2],
+                             geometric_weight=result.x[2],
+                             imagenet_weight=result.x[3],
                              postfix='dbscan',
                              clustering=out['clustering'])
 
@@ -423,14 +502,13 @@ def best_mcl(
   _run.info['best_miou'] = -result.fun
   _run.info['eta'] = result.x[0]
   _run.info['inflation'] = result.x[1]
-  _run.info['imagenet_weight'] = result.x[2]
+  _run.info['geometric_weight'] = result.x[2]
   # run clustering again with best parameters
   out = get_mcl(eta=result.x[0],
                 inflation=result.x[1],
-                imagenet_weight=result.x[2])
+                geometric_weight=result.x[2])
   clustering_based_inference(features=out['features'],
-                             imagenet_features=out['imagenet_features'],
-                             imagenet_weight=result.x[2],
+                             geometric_weight=result.x[2],
                              postfix='mcl',
                              clustering=out['clustering'])
 
