@@ -130,5 +130,6 @@ dmypy.json
 
 venv/
 ws_py/
-semseg_density/settings.py
+semsegcluster/settings.py
 .vscode/
+*.simg
