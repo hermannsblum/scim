@@ -103,9 +103,13 @@ def get_sampling_idx(subset, shard, subsample, pretrained_model,
   all_voxels = np.array([], dtype=np.int32)
   for blob in tqdm(data.shard(shard, 0)):
     frame = blob['name'].numpy().decode()
-    voxel = np.load(os.path.join(
-        directory,
-        f'{frame}_pseudolabel-voxels.npy')).squeeze().astype(np.int32)
+    try:
+      voxel = np.load(os.path.join(
+          directory,
+          f'{frame}_pseudolabel-voxels.npy')).squeeze().astype(np.int32)
+    except FileNotFoundError:
+      print(f'No voxels found, skipping frame {frame}')
+      continue
     # interpolate to feature size
     # reshapes to have array <feature_width * feature_height, list of voxels>
     voxel = voxel.reshape(
@@ -277,4 +281,27 @@ def get_imagenet_embeddings(subset,
 
   return {
       'imagenet_features': np.concatenate(all_features, axis=0),
+  }
+
+def get_geometric_features(subset, shard, subsample, expected_feature_shape, pretrained_model):
+  _, pretrained_id = get_checkpoint(pretrained_model)
+  directory = os.path.join(EXP_OUT, 'scannet_inference', subset, pretrained_id)
+  voxels = get_sampling_idx(
+      subset=subset,
+      shard=shard,
+      subsample=subsample,
+      expected_feature_shape=expected_feature_shape,
+      pretrained_model=pretrained_model)['voxels']
+  with open(os.path.join(directory, 'blockid_to_descriptor.pkl'), 'rb') as f:
+    blockid_to_descriptor = pickle.load(f)
+  geometric_features = []
+  for v in voxels:
+    if v in blockid_to_descriptor:
+      geometric_features.append(blockid_to_descriptor[v])
+    else:
+      geometric_features.append(np.array([np.nan for _ in range(32)]))
+  geometric_features = np.stack(geometric_features, axis=0)
+  assert geometric_features.shape[0] == voxels.shape[0]
+  return {
+    'geometric_features': geometric_features,
   }

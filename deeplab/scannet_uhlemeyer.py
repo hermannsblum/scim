@@ -172,8 +172,12 @@ def uhlemeyer(_run, pretrained_model, subset, pred_name, eps, min_samples):
   os.makedirs(directory, exist_ok=True)
   for blob in tqdm(data):
     frame = blob['name'].numpy().decode()
-    pred = np.load(os.path.join(
-        directory, f'{frame}_{pred_name}.npy')).squeeze().astype(np.int32)
+    try:
+      pred = np.load(os.path.join(
+          directory, f'{frame}_{pred_name}.npy')).squeeze().astype(np.int32)
+    except FileNotFoundError:
+      pred = np.load(os.path.join(
+          directory, f'{frame}_pred.npy')).squeeze().astype(np.int32)
     if frame in anomaly_frames:
       components = anomaly_frames[frame]
       for c in np.unique(components):
