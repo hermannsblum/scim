@@ -1,16 +1,18 @@
 import torchmetrics
 import numpy as np
 import torch
+import sklearn
+import sklearn.metrics
 import os
 from tqdm import tqdm
 from joblib import Memory
 
 from semseg_density.settings import EXP_OUT
 
-memory = Memory("/tmp")
+memory = Memory(EXP_OUT)
 
 
-def measure_from_confusion_matrix(cm, is_prediction=False):
+def measure_from_confusion_matrix(cm, is_prediction=False, beta=1.0):
   assert np.sum(cm[40:]) == 0
   cm = cm[:40]
   newcm = np.zeros((40, 40), dtype=np.uint32)
@@ -50,6 +52,31 @@ def measure_from_confusion_matrix(cm, is_prediction=False):
       'assigned_iou': iou,
       'assigned_miou': np.nanmean(iou),
   })
+  # contingency matrix based sklearn metrics
+  # taken from https://github.com/scikit-learn/scikit-learn/blob/baf828ca126bcb2c0ad813226963621cafe38adb/sklearn/metrics/cluster/_supervised.py#L402
+  cm = cm.astype(np.float64)
+  n_total = cm.sum()
+  n_labels = cm.sum(1)
+  n_labels = n_labels[n_labels > 0]
+  entropy_labels = -np.sum(
+      (n_labels / n_total) * (np.log(n_labels) - np.log(n_total)))
+  n_pred = cm.sum(0)
+  n_pred = n_pred[n_pred > 0]
+  entropy_pred = -np.sum(
+      (n_pred / n_total) * (np.log(n_pred) - np.log(n_total)))
+  mutual_info = sklearn.metrics.mutual_info_score(None, None, contingency=cm)
+  homogeneity = mutual_info / (entropy_labels) if entropy_labels else 1.0
+  completeness = mutual_info / (entropy_pred) if entropy_pred else 1.0
+  if homogeneity + completeness == 0.0:
+    v_measure_score = 0.0
+  else:
+    v_measure_score = ((1 + beta) * homogeneity * completeness /
+                       (beta * homogeneity + completeness))
+  measurements.update({
+    'homogeneity': homogeneity,
+    'completeness': completeness,
+    'v_score': v_measure_score,
+  })
   return measurements
 
 
@@ -62,17 +89,18 @@ def get_measurements_of_method(path, method, ignore_other=True):
     label = np.load(os.path.join(directory, f'{frame}_label.npy'))
     if ignore_other:
       label[label >= 37] = 255
-    pred = np.load(os.path.join(directory, f'{frame}_{method}.npy')).squeeze()
-    # handle nans as misclassification
-    pred[pred == -1] = 39
-    pred[pred == np.nan] = 39
-    pred[pred == 255] = 39
     # update confusion matrix, only on labelled pixels
     if np.any(label != 255):
-      torch_label = torch.from_numpy(label)
-      valid_pred = torch.from_numpy(pred[torch_label != 255])
-      valid_label = torch_label[torch_label != 255]
-      cm.update(valid_pred, valid_label)
+      label = torch.from_numpy(label)
+      pred = np.load(os.path.join(directory, f'{frame}_{method}.npy')).squeeze()
+      # handle nans as misclassification
+      pred[pred == -1] = 39
+      pred[pred == np.nan] = 39
+      # cluster numbers larger than 200 are ignored in  the confusionm  matrix
+      pred[pred > 200] = 39
+      pred = torch.from_numpy(pred)[label != 255]
+      label = label[label != 255]
+      cm.update(pred, label)
   cm = cm.compute().numpy().astype(np.uint32)
   return measure_from_confusion_matrix(cm, is_prediction='pred' in method)
 
