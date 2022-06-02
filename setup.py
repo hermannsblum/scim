@@ -14,7 +14,7 @@ setup(name='semsegcluster',
       install_requires=[
           'hnswlib', 'sacred', 'incense', 'gdown', 'numpy', 'scikit-learn',
           'scikit-optimize', 'markov_clustering', 'hdbscan', 'open3d',
-          'torchmetrics', 'kornia', 'pymongo==3.12'
+          'torchmetrics', 'kornia', 'pymongo==3.12',  'munkres',
       ],
       packages=[
           'semsegcluster', 'semsegcluster.data', 'semsegcluster.model',
