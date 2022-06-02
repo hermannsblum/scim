@@ -91,6 +91,22 @@ def get_resnet(feature_name, device):
   return model, hooks
 
 
+def get_dino(device):
+  vitb8 = torch.hub.load('facebookresearch/dino:main', 'dino_vitb16')
+  vitb8.to(device)
+  vitb8.eval()
+  return vitb8
+
+
+def dino_color_normalize(x,
+                         mean=[0.485, 0.456, 0.406],
+                         std=[0.228, 0.224, 0.225]):
+  for t, m, s in zip(x, mean, std):
+    t.sub_(m)
+    t.div_(s)
+  return x
+
+
 @memory.cache
 def get_sampling_idx(subset, shard, subsample, pretrained_model,
                      expected_feature_shape):
@@ -124,7 +140,7 @@ def get_sampling_idx(subset, shard, subsample, pretrained_model,
     assert len(already_sampled.shape) == 2
     already_sampled_idx = already_sampled.max(-1)
     if False:
-    #if already_sampled_idx.sum() > 0:
+      #if already_sampled_idx.sum() > 0:
       # sample 10% from known voxels
       sampled_idx = np.flatnonzero(already_sampled_idx)
       if sampled_idx.shape[0] > subsample // 10:
@@ -283,15 +299,71 @@ def get_imagenet_embeddings(subset,
       'imagenet_features': np.concatenate(all_features, axis=0),
   }
 
-def get_geometric_features(subset, shard, subsample, expected_feature_shape, pretrained_model):
+
+@memory.cache
+def get_dino_embeddings(subset, shard, subsample, device, pretrained_model,
+                        expected_feature_shape):
+  data = tfds.load(f'scan_net/{subset}', split='validation')
   _, pretrained_id = get_checkpoint(pretrained_model)
   directory = os.path.join(EXP_OUT, 'scannet_inference', subset, pretrained_id)
-  voxels = get_sampling_idx(
+  sampling_idx = get_sampling_idx(
       subset=subset,
       shard=shard,
       subsample=subsample,
       expected_feature_shape=expected_feature_shape,
-      pretrained_model=pretrained_model)['voxels']
+      pretrained_model=pretrained_model)['sampling_idx']
+  model = get_dino(device=device)
+
+  all_features = []
+  for blob in tqdm(data):
+    frame = blob['name'].numpy().decode()
+    if frame not in sampling_idx:
+      continue
+    image = convert_img_to_float(blob['image'])
+    # move channel from last to 2nd
+    image = tf.transpose(image, perm=[2, 0, 1])[tf.newaxis]
+    image = torch.from_numpy(image.numpy())
+    image = dino_color_normalize(image).to(device)
+
+    # run inference
+    out = model.get_intermediate_layers(image, n=1)[0]
+    h = int(image.shape[2] / model.patch_embed.patch_size)
+    w = int(image.shape[3] / model.patch_embed.patch_size)
+    out = out[:, 1:, :]  # we discard the [CLS] token
+    features = out[0].reshape(h, w, out.shape[-1]).permute((2, 0, 1))
+    features = torchvision.transforms.functional.resize(
+        features,
+        size=expected_feature_shape,
+        interpolation=torchvision.transforms.InterpolationMode.NEAREST)
+    features = features.to('cpu').detach().numpy().transpose([1, 2, 0])
+    try:
+      assert features.shape[0] == expected_feature_shape[0]
+      assert features.shape[1] == expected_feature_shape[1]
+      assert features.shape[-1] == out.shape[-1]
+    except AssertionError:
+      raise UserWarning(
+          f"shape mismatch! expected {expected_feature_shape}, got {features.shape}"
+      )
+    # check against deeplab feature size
+    features = features.reshape((-1, out.shape[-1]))
+    samples = sampling_idx[frame]
+    all_features.append(features[samples])
+    del image, features
+
+  return {
+      'dino_features': np.concatenate(all_features, axis=0),
+  }
+
+
+def get_geometric_features(subset, shard, subsample, expected_feature_shape,
+                           pretrained_model):
+  _, pretrained_id = get_checkpoint(pretrained_model)
+  directory = os.path.join(EXP_OUT, 'scannet_inference', subset, pretrained_id)
+  voxels = get_sampling_idx(subset=subset,
+                            shard=shard,
+                            subsample=subsample,
+                            expected_feature_shape=expected_feature_shape,
+                            pretrained_model=pretrained_model)['voxels']
   with open(os.path.join(directory, 'blockid_to_descriptor.pkl'), 'rb') as f:
     blockid_to_descriptor = pickle.load(f)
   geometric_features = []
@@ -303,5 +375,5 @@ def get_geometric_features(subset, shard, subsample, expected_feature_shape, pre
   geometric_features = np.stack(geometric_features, axis=0)
   assert geometric_features.shape[0] == voxels.shape[0]
   return {
-    'geometric_features': geometric_features,
+      'geometric_features': geometric_features,
   }
