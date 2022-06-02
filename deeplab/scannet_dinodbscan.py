@@ -1,7 +1,6 @@
 from sacred import Experiment
 import torch
 import torchvision
-import torchmetrics
 import PIL
 import tensorflow_datasets as tfds
 import tensorflow as tf
@@ -36,9 +35,10 @@ from semsegcluster.data.images import convert_img_to_float
 from semsegcluster.segmentation_metrics import SegmentationMetric
 from semsegcluster.settings import TMPDIR, EXP_OUT
 from semsegcluster.eval import measure_from_confusion_matrix
-from semsegcluster.sacred_utils import get_observer, get_checkpoint, get_incense_loader
+from semsegcluster.sacred_utils import get_observer, get_checkpoint
 
-from deeplab.sampling import get_deeplab_embeddings, get_deeplab, get_sampling_idx
+from deeplab.sampling import (get_deeplab_embeddings, dino_color_normalize,
+                              get_dino, get_dino_embeddings, get_sampling_idx)
 
 ex = Experiment()
 ex.observers.append(get_observer())
@@ -65,33 +65,6 @@ def measure_assigned_miou(cm):
   return np.nanmean(iou)
 
 
-class DeltaYStopper(EarlyStopper):
-  """Stop the optimization if the `n_best` minima are within `delta`
-    Stop the optimizer if the absolute difference between the `n_best`
-    objective values is less than `delta`.
-    """
-
-  def __init__(self, delta, n_best=5, n_minimum=10):
-    super(EarlyStopper, self).__init__()
-    self.delta = delta
-    self.n_best = n_best
-    self.n_minimum = n_minimum
-
-  def _criterion(self, result):
-    if len(result.func_vals) < self.n_minimum:
-      return None
-    if len(result.func_vals) >= self.n_best:
-      func_vals = np.sort(result.func_vals)
-      worst = func_vals[self.n_best - 1]
-      best = func_vals[0]
-
-      # worst is always larger, so no need for abs()
-      return worst - best < self.delta
-
-    else:
-      return None
-
-
 @memory.cache
 def get_distances(subset, shard, subsample, device, pretrained_model,
                   feature_name, pred_name, uncert_name, uncertainty_threshold,
@@ -111,6 +84,14 @@ def get_distances(subset, shard, subsample, device, pretrained_model,
                              feature_name=feature_name,
                              pred_name=pred_name,
                              uncert_name=uncert_name))
+  out.update(
+      get_dino_embeddings(subset=subset,
+                          shard=shard,
+                          subsample=subsample,
+                          device=device,
+                          pretrained_model=pretrained_model,
+                          expected_feature_shape=expected_feature_shape))
+  out['features'] = out.pop('dino_features')
   if normalize:
     out['features'] = sklearn.preprocessing.normalize(out['features'])
   out['distances'] = sp.spatial.distance.pdist(out['features'],
@@ -182,57 +163,51 @@ def distance_preprocessing(subset, shard, subsample, device, pretrained_model,
 
 
 @ex.capture
-def clustering_based_inference(features,
-                               clustering,
-                               subset,
-                               pretrained_model,
-                               postfix,
-                               feature_name,
-                               device,
-                               normalize,
-                               _run,
-                               save=True):
+def clustering_based_inference(features, clustering, subset, pretrained_model,
+                               expected_feature_shape, postfix, feature_name,
+                               device, normalize, _run):
   # set up NN index to find closest clustered sample
-  knn = hnswlib.Index(space='l2', dim=256)
+  knn = hnswlib.Index(space='l2', dim=features.shape[-1])
   knn.init_index(max_elements=features.shape[0],
                  M=64,
                  ef_construction=200,
                  random_seed=100)
   knn.add_items(features, clustering)
   data = tfds.load(f'scan_net/{subset}', split='validation')
-  model, hooks = get_deeplab(pretrained_model=pretrained_model,
-                             feature_name=feature_name,
-                             device=device)
+  model = get_dino(device)
   # make sure the directory exists
   _, pretrained_id = get_checkpoint(pretrained_model)
   directory = os.path.join(EXP_OUT, 'scannet_inference', subset, pretrained_id)
   os.makedirs(directory, exist_ok=True)
-
   for blob in tqdm(data):
     image = convert_img_to_float(blob['image'])
     # move channel from last to 2nd
     image = tf.transpose(image, perm=[2, 0, 1])[tf.newaxis]
-    image = torch.from_numpy(image.numpy()).to(device)
+    image = torch.from_numpy(image.numpy())
+    image = dino_color_normalize(image).to(device)
     # run inference
-    logits = model(image)['out']
-    features = hooks['feat']
-    if normalize:
-      features = torch.nn.functional.normalize(features, dim=1)
-    features = features.to('cpu').detach().numpy().transpose([0, 2, 3, 1])
-    feature_shape = features.shape
-    assert features.shape[-1] == 256
+    features = model.get_intermediate_layers(image, n=1)[0]
+    features = features[:, 1:, :]  # we discard the [CLS] token
+    h = int(image.shape[2] / model.patch_embed.patch_size)
+    w = int(image.shape[3] / model.patch_embed.patch_size)
+    features = features[0].reshape(h, w, features.shape[-1])
+    features = torch.nn.functional.normalize(features, dim=-1)
+    features = torchvision.transforms.functional.resize(
+        features.permute((2, 0, 1)),
+        size=expected_feature_shape,
+        interpolation=torchvision.transforms.InterpolationMode.BILINEAR)
+    features = features.to('cpu').detach().numpy().transpose([1, 2, 0])
     # query cluster assignment of closest sample
-    cluster_pred, _ = knn.knn_query(features.reshape((-1, 256)), k=1)
-    cluster_pred = cluster_pred.reshape((feature_shape[1], feature_shape[2]))
+    cluster_pred, _ = knn.knn_query(features.reshape((-1, features.shape[-1])),
+                                    k=1)
+    cluster_pred = cluster_pred.reshape(
+        (expected_feature_shape[0], expected_feature_shape[1]))
     cluster_pred = cv2.resize(cluster_pred, (640, 480),
                               interpolation=cv2.INTER_NEAREST)
     # save output
     name = blob['name'].numpy().decode()
-    if save:
-      np.save(os.path.join(directory, f'{name}_{postfix}{_run._id}.npy'),
-              cluster_pred)
-    else:
-      yield name, cluster_pred
+    np.save(os.path.join(directory, f'{name}_{postfix}dino{_run._id}.npy'),
+            cluster_pred)
 
 
 hdbscan_dimensions = [
@@ -362,58 +337,11 @@ def best_dbscan(_run, n_calls):
   _run.info['best_miou'] = result.fun
   _run.info['eps'] = result.x[0]
   _run.info['min_samples'] = result.x[1]
-  _run.info['optimisation_outcomes'] = list(result['func_vals'])
-  _run.info['optimisation_points'] = result['x_iters']
   # run clustering again with best parameters
   out = get_dbscan(eps=result.x[0], min_samples=result.x[1])
   clustering_based_inference(features=out['features'],
                              clustering=out['clustering'],
                              postfix='dbscan')
-
-
-@ex.command
-def evaluate_hdbscan_optimisation(_run, optimisation, subset, pretrained_model):
-  loader = get_incense_loader()
-  run = loader.find_by_id(optimisation)
-  assert run.config['subset'] == subset
-  assert run.config['pretrained_model'] == pretrained_model
-  _, pretrained_id = get_checkpoint(run.config['pretrained_model'])
-  directory = os.path.join(EXP_OUT, 'scannet_inference', run.config['subset'],
-                           pretrained_id)
-  outcomes = []
-  mious = []
-  for i, p in enumerate(run.info['optimisation_points']):
-    if i % 5 != 0:
-      continue
-    out = get_hdbscan(
-        cluster_selection_method=run.config['cluster_selection_method'],
-        min_cluster_size=p[0],
-        min_samples=p[1])
-    for k in [x for x in out.keys() if not x in ['features', 'clustering']]:
-      del out[k]
-    cm = torchmetrics.ConfusionMatrix(num_classes=200)
-    for frame, pred in clustering_based_inference(features=out['features'],
-                                                  postfix='None',
-                                                  save=False,
-                                                  clustering=out['clustering']):
-      label = np.load(os.path.join(directory, f'{frame}_label.npy'))
-      label[label >= 37] = 255
-      # update confusion matrix, only on labelled pixels
-      if np.any(label != 255):
-        label = torch.from_numpy(label)
-        # handle nans as misclassification
-        pred[pred == -1] = 39
-        pred[np.isnan(pred)] = 39
-        # cluster numbers larger than 200 are ignored in  the confusionm  matrix
-        pred[pred > 200] = 39
-        pred = torch.from_numpy(pred)[label != 255]
-        label = label[label != 255]
-        cm.update(pred, label)
-    cm = cm.compute().numpy().astype(np.uint32)
-    outcomes.append(run.info['optimisation_outcomes'][i])
-    mious.append(measure_assigned_miou(cm))
-  _run.info['optimisation_outcomes'] = outcomes
-  _run.info['mious'] = mious
 
 
 @ex.main

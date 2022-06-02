@@ -118,7 +118,8 @@ def get_nakajima_distances(subset, shard, subsample, device, pretrained_model,
 
 @ex.capture
 def nakajima_inference(weighted_features, geometric_features, clustering,
-                       subset, pretrained_model, device, feature_name, _run):
+                       expected_feature_shape, use_geometric_feature, subset,
+                       pretrained_model, device, feature_name, _run):
   # set up NN index to find closest clustered sample
   knn = hnswlib.Index(space='l2', dim=256)
   knn.init_index(max_elements=weighted_features.shape[0],
@@ -147,6 +148,7 @@ def nakajima_inference(weighted_features, geometric_features, clustering,
     blockid_to_descriptor = pickle.load(f)
   feature_voxels = np.array(list(blockid_to_descriptor.keys()))
   for blob in tqdm(data):
+    frame = blob['name'].numpy().decode()
     image = convert_img_to_float(blob['image'])
     # move channel from last to 2nd
     image = tf.transpose(image, perm=[2, 0, 1])[tf.newaxis]
@@ -203,6 +205,8 @@ def nakajima_inference(weighted_features, geometric_features, clustering,
       cluster_pred = np.where(dl_distance < geo_distance, dl_pred, geo_pred)
     except FileNotFoundError:
       cluster_pred = dl_pred
+    if not use_geometric_feature:
+      cluster_pred = dl_pred
     # rescale to output size
     cluster_pred = cluster_pred.reshape((feature_shape[1], feature_shape[2]))
     cluster_pred = cv2.resize(cluster_pred, (640, 480),
@@ -220,10 +224,13 @@ mcl_nakajima_dimensions = [
 
 
 @ex.capture
-def get_mcl_nakajima(eta, inflation):
+def get_mcl_nakajima(eta, inflation, use_geometric_feature):
   out = get_nakajima_distances()
   n_points = out['features'].shape[0]
-  distances = out['distances'] + out['geometric_distances']
+  if use_geometric_feature:
+    distances = out['distances'] + out['geometric_distances']
+  else:
+    distances = out['distances']
   del out
   # add their activation function
   distances = np.exp(-1.0 * eta * distances)
@@ -270,6 +277,7 @@ ex.add_config(subsample=100,
               uncert_name='pseudolabel-maxlogit-pp',
               expected_feature_shape=[60, 80],
               feature_name='classifier.2',
+              use_geometric_feature=True,
               ignore_other=True)
 
 
