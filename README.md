@@ -36,20 +36,20 @@ Method implementations are split up into several steps for added flexibility. Be
 <details>
   <summary>Nakajima</summary>
 
-1. run inference  
-```bash 
+1. run inference
+```bash
 python deeplab/scannet_inference.py with subset=$SCENE and pretrained_model=$MODEL
 ```
 2. run mapping (for flexibility, we run semantic mapping and uncertainty mapping separately)
 ```bash
-roslaunch panoptic_mapping_utils scannnet_mapping.launch scene:=$SCENE model:=$MODEL
-roslaunch panoptic_mapping_utils scannnet_uncertmap.launch scene:=$SCENE model:=$MODEL
+roslaunch panoptic_mapping_utils scannnet_mapping.launch scene:=$SCENE model:=$MODEL inference_path:=<folder for outputs>/scannet_inference/$SCENE/$MODEL
+roslaunch panoptic_mapping_utils scannnet_uncertmap.launch scene:=$SCENE model:=$MODEL inference_path:=<folder for outputs>/scannet_inference/$SCENE/$MODEL
 ```
 3. render the maps
 ```bash
-panoptic_mapping_utils scannnet_predrender.launch scene:=$SCENE model:=$MODEL
-panoptic_mapping_utils scannnet_voxelidrender.launch scene:=$SCENE model:=$MODEL
-panoptic_mapping_utils scannnet_uncertrender.launch scene:=$SCENE model:=$MODEL
+panoptic_mapping_utils scannnet_predrender.launch scene:=$SCENE model:=$MODEL inference_path:=<folder for outputs>/scannet_inference/$SCENE/$MODEL
+panoptic_mapping_utils scannnet_voxelidrender.launch scene:=$SCENE model:=$MODEL inference_path:=<folder for outputs>/scannet_inference/$SCENE/$MODEL
+panoptic_mapping_utils scannnet_uncertrender.launch scene:=$SCENE model:=$MODEL inference_path:=<folder for outputs>/scannet_inference/$SCENE/$MODEL
 ```
 4. get the geometric features (we run 3DSmoothNet in a singularity container)
 ```bash
@@ -65,8 +65,8 @@ python3 deeplab/scannet_nakajima.py best_mcl_nakajima  with subset=$SCENE pretra
 <details>
   <summary>Uhlemeyer</summary>
 
-1. run inference  
-```bash 
+1. run inference
+```bash
 python deeplab/scannet_inference.py with subset=$SCENE and pretrained_model=$MODEL
 ```
 
@@ -83,21 +83,21 @@ python deeplab/scannet_adaptedinference.py with training=<id from above> subset=
 
 <details>
   <summary>our approach to SCIM</summary>
-  
-1. run inference  
-```bash 
+
+1. run inference
+```bash
 python deeplab/scannet_inference.py with subset=$SCENE and pretrained_model=$MODEL
 ```
 2. run mapping (for flexibility, we run semantic mapping and uncertainty mapping separately)
 ```bash
-roslaunch panoptic_mapping_utils scannnet_mapping.launch scene:=$SCENE model:=$MODEL
-roslaunch panoptic_mapping_utils scannnet_uncertmap.launch scene:=$SCENE model:=$MODEL
+roslaunch panoptic_mapping_utils scannnet_mapping.launch scene:=$SCENE model:=$MODEL inference_path:=<folder for outputs>/scannet_inference/$SCENE/$MODEL
+roslaunch panoptic_mapping_utils scannnet_uncertmap.launch scene:=$SCENE model:=$MODEL inference_path:=<folder for outputs>/scannet_inference/$SCENE/$MODEL
 ```
 3. render the maps
 ```bash
-panoptic_mapping_utils scannnet_predrender.launch scene:=$SCENE model:=$MODEL
-panoptic_mapping_utils scannnet_voxelidrender.launch scene:=$SCENE model:=$MODEL
-panoptic_mapping_utils scannnet_uncertrender.launch scene:=$SCENE model:=$MODEL
+panoptic_mapping_utils scannnet_predrender.launch scene:=$SCENE model:=$MODEL inference_path:=<folder for outputs>/scannet_inference/$SCENE/$MODEL
+panoptic_mapping_utils scannnet_voxelidrender.launch scene:=$SCENE model:=$MODEL inference_path:=<folder for outputs>/scannet_inference/$SCENE/$MODEL
+panoptic_mapping_utils scannnet_uncertrender.launch scene:=$SCENE model:=$MODEL inference_path:=<folder for outputs>/scannet_inference/$SCENE/$MODEL
 ```
 4. get the geometric features (we run 3DSmoothNet in a singularity container)
 ```bash
@@ -109,7 +109,7 @@ roslaunch panoptic_mapping_utils scannnet_geofeatures.launch scene:=$SCENE model
 python3 deeplab/scannet_segandgeoanddino.py best_hdbscan  with subset=$SCENE pretrained_model=$MODEL n_calls=200 cluster_selection_method=eom
 ```
 6. combine clustering and mapping into pseudolabels (`outlier` needs to be adjusted dependent on the clustering above)
-```bash 
+```bash
 python deeplab/pseudolabel.py with subset=$SCENE and pretrained_model=$MODEL outlier=segandgeoanddinohdbscan<id>
 ```
 7. train the segmentation model and run inference with the new model
@@ -118,21 +118,21 @@ python deeplab/scannet_adaptation.py with subset=$SCENE and pretrained_model=$MO
 python deeplab/scannet_adaptedinference.py with training=<id from above> subset=$SCENE
 ```
  </details>
-  
+
 # Installation
 
 We offer a [dockerfile](https://github.com/hermannsblum/scim/blob/main/Dockerfile) that installs the whole code-base into a container. To install individual parts, see below:
-  
+
 ## Clustering & Learning
-  
+
 This part is implemented in python. To install it, run:
 ```bash
 git clone https://github.com/hermannsblum/scim.git
 cd scim && python -m pip install -e .
 ```
-  
+
 ## Mapping
-  
+
 For mapping, we rely on an [existing mapping framework](https://github.com/ethz-asl/panoptic_mapping). This is implemented in ROS. To install the framework into a ROS workspace, run:
 ```bash
 wstool init \
@@ -140,4 +140,26 @@ wstool init \
   && wstool merge panoptic_mapping/panoptic_mapping_https.rosinstall \
   && wstool update -j8 \
   && catkin build panoptic_mapping_utils point_cloud_io
+```
+
+## Data Structure
+
+All intermediate outputs of different steps are stored to a folder. This folder needs to be set correctly in some places:
+
+Add a file `semsegcluster/settings.py` with the following content:
+```python
+EXPERIMENT_STORAGE_FOLDER = '<folder for experimental logs>'
+TMPDIR = '/tmp'
+TMP_DIR =  '/tmp'
+EXP_OUT = '<folder for outputs>'
+```
+The `<folder for outputs>` is also the one that should be used in the `inference_path:=` argument to the roslaunch files.
+
+
+Experimental logs are stored with [sacred](https://github.com/IDSIA/sacred). If instead of tracking them in a folder, you want to track them in a database, please add the following lines to `settings.py`:
+```python
+EXPERIMENT_DB_HOST =
+EXPERIMENT_DB_USER =
+EXPERIMENT_DB_PWD =
+EXPERIMENT_DB_NAME =
 ```
