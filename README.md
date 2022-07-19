@@ -31,6 +31,89 @@ torchdata = TFDataIterableDataset(data)
 
 # Method Implementations
 
+Method implementations are split up into several steps for added flexibility. Below we describe the workflows for each method.
+
+## Nakajima
+
+1. run inference  
+```bash 
+python deeplab/scannet_inference.py with subset=$SCENE and pretrained_model=$MODEL
+```
+2. run mapping (for flexibility, we run semantic mapping and uncertainty mapping separately)
+```bash
+roslaunch panoptic_mapping_utils scannnet_mapping.launch scene:=$SCENE model:=$MODEL
+roslaunch panoptic_mapping_utils scannnet_uncertmap.launch scene:=$SCENE model:=$MODEL
+```
+3. render the maps
+```bash
+panoptic_mapping_utils scannnet_predrender.launch scene:=$SCENE model:=$MODEL
+panoptic_mapping_utils scannnet_voxelidrender.launch scene:=$SCENE model:=$MODEL
+panoptic_mapping_utils scannnet_uncertrender.launch scene:=$SCENE model:=$MODEL
+```
+4. get the geometric features (we run 3DSmoothNet in a singularity container)
+```bash
+singularity run --nv --bind $OUTPUTS/$SCENE/$MODEL/point_cloud_0.ply:/pc.ply --bind $OUTPUTS/$SCENE/$MODEL/smoothnet:/output --bind $SMOOTHNET_DATA/evaluate:/3DSmoothNet/data/evaluate --bind $SMOOTHNET_DATA/logs:/3DSmoothNet/logs --bind $SMOOTHNET_DATA/preprocessed:/preprocessed smoothnet.simg
+roslaunch panoptic_mapping_utils scannnet_geofeatures.launch scene:=$SCENE model:=$MODEL
+```
+5. run parameter optimisation and clustering
+```bash
+python3 deeplab/scannet_nakajima.py best_mcl_nakajima  with subset=$SCENE pretrained_model=$MODEL n_calls=100 shard=20
+```
+
+## Uhlemeyer
+
+1. run inference  
+```bash 
+python deeplab/scannet_inference.py with subset=$SCENE and pretrained_model=$MODEL
+```
+
+2. run meta-segmentation and clustering
+```bash
+python3 deeplab/scannet_uhlemeyer.py with subset=$SCENE pretrained_model=$MODEL pred_name=pred uncert_name=maxlogit-pp eps=3.5 min_samples=10
+```
+3. train the segmentation model and run inference with the new model
+```bash
+python deeplab/scannet_adaptation.py with subset=$SCENE and pretrained_model=$MODEL pseudolabels=uhlemeyer<id>
+python deeplab/scannet_adaptedinference.py with training=<id from above> subset=$SCENE
+```
+
+## our approach to SCIM
+
+
+1. run inference  
+```bash 
+python deeplab/scannet_inference.py with subset=$SCENE and pretrained_model=$MODEL
+```
+2. run mapping (for flexibility, we run semantic mapping and uncertainty mapping separately)
+```bash
+roslaunch panoptic_mapping_utils scannnet_mapping.launch scene:=$SCENE model:=$MODEL
+roslaunch panoptic_mapping_utils scannnet_uncertmap.launch scene:=$SCENE model:=$MODEL
+```
+3. render the maps
+```bash
+panoptic_mapping_utils scannnet_predrender.launch scene:=$SCENE model:=$MODEL
+panoptic_mapping_utils scannnet_voxelidrender.launch scene:=$SCENE model:=$MODEL
+panoptic_mapping_utils scannnet_uncertrender.launch scene:=$SCENE model:=$MODEL
+```
+4. get the geometric features (we run 3DSmoothNet in a singularity container)
+```bash
+singularity run --nv --bind $OUTPUTS/$SCENE/$MODEL/point_cloud_0.ply:/pc.ply --bind $OUTPUTS/$SCENE/$MODEL/smoothnet:/output --bind $SMOOTHNET_DATA/evaluate:/3DSmoothNet/data/evaluate --bind $SMOOTHNET_DATA/logs:/3DSmoothNet/logs --bind $SMOOTHNET_DATA/preprocessed:/preprocessed smoothnet.simg
+roslaunch panoptic_mapping_utils scannnet_geofeatures.launch scene:=$SCENE model:=$MODEL
+```
+5. run parameter optimisation and clustering (here we combine segmentation feautures, geometric features, and DINO; see the `deeplab/` folder for different scripts combining different features)
+```bash
+python3 deeplab/scannet_segandgeoanddino.py best_hdbscan  with subset=$SCENE pretrained_model=$MODEL n_calls=200 cluster_selection_method=eom
+```
+6. combine clustering and mapping into pseudolabels (`outlier` needs to be adjusted dependent on the clustering above)
+```bash 
+python deeplab/pseudolabel.py with subset=$SCENE and pretrained_model=$MODEL outlier=segandgeoanddinohdbscan<id>
+```
+7. train the segmentation model and run inference with the new model
+```bash
+python deeplab/scannet_adaptation.py with subset=$SCENE and pretrained_model=$MODEL pseudolabels=merged-pseudolabel-pred-segandgeoanddinohdbscan<id>
+python deeplab/scannet_adaptedinference.py with training=<id from above> subset=$SCENE
+```
+
 # Installation
 
 
