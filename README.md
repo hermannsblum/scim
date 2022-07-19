@@ -163,3 +163,7 @@ EXPERIMENT_DB_USER =
 EXPERIMENT_DB_PWD =
 EXPERIMENT_DB_NAME =
 ```
+
+## ScanNet
+
+Unfortunately, the code does not yet directly download from ScanNet. Therefore, first download the relevant scenes as described [here](https://github.com/ScanNet/ScanNet) and then put them in a zip archive called `valscans.zip` that you store in `~/tensorflow_datasets/downloads/manual/valscans.zip`. TFDS will then automatically extract, resize, and load the scenes.
