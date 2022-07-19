@@ -11,9 +11,9 @@ To get started on experiments easily, we provide DeepLabv3+ checkpoints trained 
 
 <table>
 <tr><th>Outlier Class</th><th>ScanNet Validation</th><th>Checkpoint</th></tr>
-<tr><td>television</td><td></td><td><a target="_blank" href="https://zenodo.org/record/6840795/files/deeplab_no_tv.pth?download=1">download</a></td></tr>
-<tr><td>books + bookshelf</td><td></td><td><a target="_blank" href="https://zenodo.org/record/6840795/files/deeplab_no_books.pth?download=1">download</a></td></tr>
-<tr><td>towel</td><td></td><td><a target="_blank" href="https://zenodo.org/record/6840795/files/deeplab_no_towel.pth?download=1">download</a></td></tr>
+<tr><td>television</td><td>43% mIoU</td><td><a target="_blank" href="https://zenodo.org/record/6840795/files/deeplab_no_tv.pth?download=1">download</a></td></tr>
+<tr><td>books + bookshelf</td><td>42% mIoU</td><td><a target="_blank" href="https://zenodo.org/record/6840795/files/deeplab_no_books.pth?download=1">download</a></td></tr>
+<tr><td>towel</td><td>41% mIoU</td><td><a target="_blank" href="https://zenodo.org/record/6840795/files/deeplab_no_towel.pth?download=1">download</a></td></tr>
 </table>
 
 # Evaluation Data
