@@ -33,7 +33,8 @@ torchdata = TFDataIterableDataset(data)
 
 Method implementations are split up into several steps for added flexibility. Below we describe the workflows for each method.
 
-## Nakajima
+<details>
+  <summary>Nakajima</summary>
 
 1. run inference  
 ```bash 
@@ -59,8 +60,10 @@ roslaunch panoptic_mapping_utils scannnet_geofeatures.launch scene:=$SCENE model
 ```bash
 python3 deeplab/scannet_nakajima.py best_mcl_nakajima  with subset=$SCENE pretrained_model=$MODEL n_calls=100 shard=20
 ```
+  </details>
 
-## Uhlemeyer
+<details>
+  <summary>Uhlemeyer</summary>
 
 1. run inference  
 ```bash 
@@ -76,10 +79,11 @@ python3 deeplab/scannet_uhlemeyer.py with subset=$SCENE pretrained_model=$MODEL 
 python deeplab/scannet_adaptation.py with subset=$SCENE and pretrained_model=$MODEL pseudolabels=uhlemeyer<id>
 python deeplab/scannet_adaptedinference.py with training=<id from above> subset=$SCENE
 ```
+  </details>
 
-## our approach to SCIM
-
-
+<details>
+  <summary>our approach to SCIM</summary>
+  
 1. run inference  
 ```bash 
 python deeplab/scannet_inference.py with subset=$SCENE and pretrained_model=$MODEL
@@ -113,7 +117,27 @@ python deeplab/pseudolabel.py with subset=$SCENE and pretrained_model=$MODEL out
 python deeplab/scannet_adaptation.py with subset=$SCENE and pretrained_model=$MODEL pseudolabels=merged-pseudolabel-pred-segandgeoanddinohdbscan<id>
 python deeplab/scannet_adaptedinference.py with training=<id from above> subset=$SCENE
 ```
-
+ </details>
+  
 # Installation
 
-
+We offer a [dockerfile](https://github.com/hermannsblum/scim/blob/main/Dockerfile) that installs the whole code-base into a container. To install individual parts, see below:
+  
+## Clustering & Learning
+  
+This part is implemented in python. To install it, run:
+```bash
+git clone https://github.com/hermannsblum/scim.git
+cd scim && python -m pip install -e .
+```
+  
+## Mapping
+  
+For mapping, we rely on an [existing mapping framework](https://github.com/ethz-asl/panoptic_mapping). This is implemented in ROS. To install the framework into a ROS workspace, run:
+```bash
+wstool init \
+  && git clone --branch hermann-devel https://github.com/ethz-asl/panoptic_mapping.git \
+  && wstool merge panoptic_mapping/panoptic_mapping_https.rosinstall \
+  && wstool update -j8 \
+  && catkin build panoptic_mapping_utils point_cloud_io
+```
