@@ -16,6 +16,16 @@ To get started on experiments easily, we provide DeepLabv3+ checkpoints trained 
 <tr><td>towel</td><td>41% mIoU</td><td><a target="_blank" href="https://zenodo.org/record/6840795/files/deeplab_no_towel.pth?download=1">download</a></td></tr>
 </table>
 
+You can also load the models directly through torchhub:
+
+```python
+import torch
+no_tv = torch.hub.load('hermannsblum/scim:main', 'dv3res101_no_tv')
+no_book = torch.hub.load('hermannsblum/scim:main', 'dv3res101_no_book')
+no_towel = torch.hub.load('hermannsblum/scim:main', 'dv3res101_no_towel')
+```
+
+
 # Evaluation Data
 
 To automatically download and preprocess data, we use TFDS with a pytorch wrapper:
