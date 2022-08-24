@@ -1,6 +1,7 @@
 from sacred import Experiment
 import torch
 import torchvision
+import torchmetrics
 import PIL
 import tensorflow_datasets as tfds
 import tensorflow as tf
@@ -35,7 +36,7 @@ from semsegcluster.data.images import convert_img_to_float
 from semsegcluster.segmentation_metrics import SegmentationMetric
 from semsegcluster.settings import TMPDIR, EXP_OUT
 from semsegcluster.eval import measure_from_confusion_matrix
-from semsegcluster.sacred_utils import get_observer, get_checkpoint
+from semsegcluster.sacred_utils import get_observer, get_checkpoint, get_incense_loader
 
 from deeplab.sampling import get_deeplab_embeddings, get_deeplab, get_sampling_idx
 
@@ -43,6 +44,25 @@ ex = Experiment()
 ex.observers.append(get_observer())
 
 memory = Memory("/tmp")
+
+
+def measure_assigned_miou(cm):
+  cm = cm[:40].astype(np.uint32)
+  newcm = np.zeros((40, 40), dtype=np.uint32)
+  for pred_c in range(cm.shape[1]):
+    if pred_c == 39:
+      assigned_class = 38
+    else:
+      assigned_class = np.argmax(cm[:, pred_c])
+    if newcm[assigned_class, assigned_class] < cm[assigned_class, pred_c]:
+      # count those existing assigned classifications as misclassifications
+      newcm[:, 38] += newcm[:, assigned_class]
+      # assign current cluster to this class
+      newcm[:, assigned_class] = cm[:, pred_c]
+    else:
+      newcm[:, 38] += cm[:, pred_c]
+  iou = np.diag(newcm) / (newcm.sum(0) + newcm.sum(1) - np.diag(newcm))
+  return np.nanmean(iou)
 
 
 class DeltaYStopper(EarlyStopper):
@@ -124,6 +144,13 @@ def get_distances(subset, shard, subsample, device, pretrained_model,
           (i + 2) * (i + 1)) // 2] = out['voxels'][i] == out['voxels'][j]
   out['testing_idx'] = np.logical_and(
       out['uncertainty'] < uncertainty_threshold, out['prediction'] != 255)
+  # first scale such that 90% of inliers of same class are below 1
+  inlier_dist = out['distances'][np.logical_and(out['inlier_pair'],
+                                                out['same_class_pair'])]
+  scale_idx = int(0.9 * inlier_dist.shape[0])
+  scale_value = np.partition(inlier_dist, scale_idx)[scale_idx]
+  #_run.info['scale_value'] = scale_value
+  out['distances'] /= scale_value
   return out
 
 
@@ -131,7 +158,7 @@ def get_distances(subset, shard, subsample, device, pretrained_model,
 def distance_preprocessing(subset, shard, subsample, device, pretrained_model,
                            feature_name, pred_name, uncert_name,
                            uncertainty_threshold, expected_feature_shape,
-                           normalize, apply_scaling, _run):
+                           normalize, _run):
   out = get_distances(subset=subset,
                       shard=shard,
                       subsample=subsample,
@@ -144,15 +171,6 @@ def distance_preprocessing(subset, shard, subsample, device, pretrained_model,
                       expected_feature_shape=expected_feature_shape,
                       normalize=normalize)
   # now generate distance matrix
-  if apply_scaling:
-    # first scale such that 90% of inliers of same class are below 1
-    inlier_dist = out['distances'][np.logical_and(out['inlier_pair'],
-                                                  out['same_class_pair'])]
-    scale_idx = int(0.9 * inlier_dist.shape[0])
-    print(f"{inlier_dist.shape=}, {scale_idx=}")
-    scale_value = np.partition(inlier_dist, scale_idx)[scale_idx]
-    #_run.info['scale_value'] = scale_value
-    out['distances'] /= scale_value
   adjacency = sp.spatial.distance.squareform(out['distances'])
   return {
       'features': out['features'],
@@ -164,8 +182,16 @@ def distance_preprocessing(subset, shard, subsample, device, pretrained_model,
 
 
 @ex.capture
-def clustering_based_inference(features, clustering, subset, pretrained_model,
-                               feature_name, device, normalize, _run):
+def clustering_based_inference(features,
+                               clustering,
+                               subset,
+                               pretrained_model,
+                               postfix,
+                               feature_name,
+                               device,
+                               normalize,
+                               _run,
+                               save=True):
   # set up NN index to find closest clustered sample
   knn = hnswlib.Index(space='l2', dim=256)
   knn.init_index(max_elements=features.shape[0],
@@ -202,8 +228,11 @@ def clustering_based_inference(features, clustering, subset, pretrained_model,
                               interpolation=cv2.INTER_NEAREST)
     # save output
     name = blob['name'].numpy().decode()
-    np.save(os.path.join(directory, f'{name}_hdbscan{_run._id}.npy'),
-            cluster_pred)
+    if save:
+      np.save(os.path.join(directory, f'{name}_{postfix}{_run._id}.npy'),
+              cluster_pred)
+    else:
+      yield name, cluster_pred
 
 
 hdbscan_dimensions = [
@@ -213,15 +242,13 @@ hdbscan_dimensions = [
 
 
 @ex.capture
-def get_hdbscan(apply_scaling, cluster_selection_method, min_cluster_size,
-                min_samples):
-  adjacency = distance_preprocessing(apply_scaling=apply_scaling)['adjacency']
+def get_hdbscan(cluster_selection_method, min_cluster_size, min_samples):
+  out = distance_preprocessing()
   clusterer = hdbscan.HDBSCAN(min_cluster_size=int(min_cluster_size),
                               min_samples=int(min_samples),
                               cluster_selection_method=cluster_selection_method,
                               metric='precomputed')
-  clustering= clusterer.fit_predict(adjacency)
-  out = distance_preprocessing(apply_scaling=apply_scaling)
+  clustering = clusterer.fit_predict(out['adjacency'])
   out['clustering'] = clustering
   return out
 
@@ -236,8 +263,7 @@ def score_hdbscan(min_cluster_size, min_samples):
   cm = sklearn.metrics.confusion_matrix(out['prediction'][out['testing_idx']],
                                         out['clustering'][out['testing_idx']],
                                         labels=list(range(200)))
-  miou = measure_from_confusion_matrix(cm.astype(np.uint32))['assigned_miou']
-  print(f'{miou=:.3f}')
+  miou = measure_assigned_miou(cm)
   return -1.0 * (0.0 if np.isnan(miou) else miou)
 
 
@@ -249,13 +275,11 @@ dbscan_dimensions = [
 
 @ex.capture
 def get_dbscan(apply_scaling, eps, min_samples):
-  adjacency = distance_preprocessing(apply_scaling=apply_scaling)['adjacency']
+  out = distance_preprocessing()
   clusterer = sklearn.cluster.DBSCAN(eps=eps,
                                      min_samples=min_samples,
                                      metric='precomputed')
-  print('stating clustering')
-  clustering = clusterer.fit_predict(adjacency)
-  out = distance_preprocessing(apply_scaling=apply_scaling)
+  clustering = clusterer.fit_predict(out['adjacency'])
   out['clustering'] = clustering
   return out
 
@@ -269,8 +293,7 @@ def score_dbscan(eps, min_samples):
   cm = sklearn.metrics.confusion_matrix(out['prediction'][out['testing_idx']],
                                         out['clustering'][out['testing_idx']],
                                         labels=list(range(200)))
-  miou = measure_from_confusion_matrix(cm.astype(np.uint32))['assigned_miou']
-  print(f'{miou=:.3f}')
+  miou = measure_assigned_miou(cm)
   return -1.0 * (0.0 if np.isnan(miou) else miou)
 
 
@@ -283,10 +306,7 @@ ex.add_config(
     pred_name='pseudolabel-pred',
     uncert_name='pseudolabel-maxlogit-pp',
     ignore_other=True,
-    apply_scaling=True,
-    same_voxel_close=None,
     uncertainty_threshold=-3,
-    distance_activation_factor=None,
     normalize=True,
 )
 
@@ -315,10 +335,13 @@ def best_hdbscan(
   _run.info['best_miou'] = -result.fun
   _run.info['min_cluster_size'] = result.x[0]
   _run.info['min_samples'] = result.x[1]
+  _run.info['optimisation_outcomes'] = list(result['func_vals'])
+  _run.info['optimisation_points'] = result['x_iters']
   # run clustering again with best parameters
   out = get_hdbscan(min_cluster_size=result.x[0], min_samples=result.x[1])
   clustering_based_inference(features=out['features'],
-                             clustering=out['clustering'])
+                             clustering=out['clustering'],
+                             postfix='hdbscan')
 
 
 @ex.command
@@ -339,10 +362,58 @@ def best_dbscan(_run, n_calls):
   _run.info['best_miou'] = result.fun
   _run.info['eps'] = result.x[0]
   _run.info['min_samples'] = result.x[1]
+  _run.info['optimisation_outcomes'] = list(result['func_vals'])
+  _run.info['optimisation_points'] = result['x_iters']
   # run clustering again with best parameters
   out = get_dbscan(eps=result.x[0], min_samples=result.x[1])
   clustering_based_inference(features=out['features'],
-                             clustering=out['clustering'])
+                             clustering=out['clustering'],
+                             postfix='dbscan')
+
+
+@ex.command
+def evaluate_hdbscan_optimisation(_run, optimisation, subset, pretrained_model):
+  loader = get_incense_loader()
+  run = loader.find_by_id(optimisation)
+  assert run.config['subset'] == subset
+  assert run.config['pretrained_model'] == pretrained_model
+  _, pretrained_id = get_checkpoint(run.config['pretrained_model'])
+  directory = os.path.join(EXP_OUT, 'scannet_inference', run.config['subset'],
+                           pretrained_id)
+  outcomes = []
+  mious = []
+  for i, p in enumerate(run.info['optimisation_points']):
+    if i % 5 != 0:
+      continue
+    out = get_hdbscan(
+        cluster_selection_method=run.config['cluster_selection_method'],
+        min_cluster_size=p[0],
+        min_samples=p[1])
+    for k in [x for x in out.keys() if not x in ['features', 'clustering']]:
+      del out[k]
+    cm = torchmetrics.ConfusionMatrix(num_classes=200)
+    for frame, pred in clustering_based_inference(features=out['features'],
+                                                  postfix='None',
+                                                  save=False,
+                                                  clustering=out['clustering']):
+      label = np.load(os.path.join(directory, f'{frame}_label.npy'))
+      label[label >= 37] = 255
+      # update confusion matrix, only on labelled pixels
+      if np.any(label != 255):
+        label = torch.from_numpy(label)
+        # handle nans as misclassification
+        pred[pred == -1] = 39
+        pred[np.isnan(pred)] = 39
+        # cluster numbers larger than 200 are ignored in  the confusionm  matrix
+        pred[pred > 200] = 39
+        pred = torch.from_numpy(pred)[label != 255]
+        label = label[label != 255]
+        cm.update(pred, label)
+    cm = cm.compute().numpy().astype(np.uint32)
+    outcomes.append(run.info['optimisation_outcomes'][i])
+    mious.append(measure_assigned_miou(cm))
+  _run.info['optimisation_outcomes'] = outcomes
+  _run.info['mious'] = mious
 
 
 @ex.main
@@ -369,7 +440,8 @@ def dbscan(
   cm = sklearn.metrics.confusion_matrix(out['prediction'], out['clustering'])
   _run.info['clustering_measurements'] = measure_from_confusion_matrix(cm)
   clustering_based_inference(features=out['features'],
-                             clustering=out['clustering'])
+                             clustering=out['clustering'],
+                             postfix='dbscan')
 
 
 if __name__ == '__main__':
