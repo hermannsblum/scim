@@ -111,6 +111,8 @@ def get_distances(subset, shard, subsample, device, pretrained_model,
     for i in range(j):
       out['inlier_pair'][m * i + j - ((i + 2) * (i + 1)) // 2] = np.logical_and(
           is_inlier[i], is_inlier[j])
+  out['testing_idx'] = np.logical_and(
+      out['uncertainty'] < uncertainty_threshold, out['prediction'] != 255)
   return out
 
 
@@ -143,6 +145,7 @@ def distance_preprocessing(geometric_weight, imagenet_weight):
       'adjacency': adjacency,
       'prediction': out['prediction'],
       'uncertainty': out['uncertainty'],
+      'testing_idx': out['testing_idx'],
   }
 
 
@@ -307,12 +310,9 @@ def score_hdbscan(geometric_weight, imagenet_weight, min_cluster_size,
   out['clustering'][out['clustering'] == -1] = 39
   # cluster numbers larger than 200 are ignored in the confusion  matrix
   out['clustering'][out['clustering'] > 200] = 39
-  cm = sklearn.metrics.confusion_matrix(
-      out['prediction'][np.logical_and(out['uncertainty'] < -3,
-                                       out['prediction'] != 255)],
-      out['clustering'][np.logical_and(out['uncertainty'] < -3,
-                                       out['prediction'] != 255)],
-      labels=list(range(400)))
+  cm = sklearn.metrics.confusion_matrix(out['prediction'][out['testing_idx']],
+                                        out['clustering'][out['testing_idx']],
+                                        labels=list(range(200)))
   measures = measure_from_confusion_matrix(cm.astype(np.uint32))
   miou = measures['assigned_miou']
   vscore = measures['v_score']
@@ -333,6 +333,8 @@ def get_dbscan(eps, min_samples, geometric_weight, imagenet_weight):
   adjacency = distance_preprocessing(
       geometric_weight=geometric_weight,
       imagenet_weight=imagenet_weight)['adjacency']
+  # TODO check where negative values come from. Numerical issue?
+  adjacency[adjacency < 0] = 0
   clusterer = sklearn.cluster.DBSCAN(eps=eps,
                                      min_samples=min_samples,
                                      metric='precomputed')
@@ -344,21 +346,19 @@ def get_dbscan(eps, min_samples, geometric_weight, imagenet_weight):
 
 
 @use_named_args(dimensions=dbscan_dimensions)
-def score_dbscan(eps, min_samples, geometric_weight):
-  if geometric_weight + imagenet_weight >= 1:
+def score_dbscan(eps, min_samples, imagenet_weight, geometric_weight):
+  if float(geometric_weight) + float(imagenet_weight) >= 1:
     return 1.
-  out = get_dbscan(eps=eps,
-                   min_samples=min_samples,
-                   geometric_weight=imagenet_weight)
+  out = get_dbscan(eps=float(eps),
+                   min_samples=int(min_samples),
+                   imagenet_weight=float(imagenet_weight),
+                   geometric_weight=float(imagenet_weight))
   out['clustering'][out['clustering'] == -1] = 39
   # cluster numbers larger than 200 are ignored in the confusion  matrix
   out['clustering'][out['clustering'] > 200] = 39
-  cm = sklearn.metrics.confusion_matrix(
-      out['prediction'][np.logical_and(out['uncertainty'] < -3,
-                                       out['prediction'] != 255)],
-      out['clustering'][np.logical_and(out['uncertainty'] < -3,
-                                       out['prediction'] != 255)],
-      labels=list(range(200)))
+  cm = sklearn.metrics.confusion_matrix(out['prediction'][out['testing_idx']],
+                                        out['clustering'][out['testing_idx']],
+                                        labels=list(range(200)))
   measures = measure_from_confusion_matrix(cm.astype(np.uint32))
   miou = measures['assigned_miou']
   vscore = measures['v_score']
@@ -405,12 +405,9 @@ def score_mcl(eta, inflation, geometric_weight):
   out['clustering'][out['clustering'] == -1] = 39
   # cluster numbers larger than 200 are ignored in the confusion  matrix
   out['clustering'][out['clustering'] > 200] = 39
-  cm = sklearn.metrics.confusion_matrix(
-      out['prediction'][np.logical_and(out['uncertainty'] < -3,
-                                       out['prediction'] != 255)],
-      out['clustering'][np.logical_and(out['uncertainty'] < -3,
-                                       out['prediction'] != 255)],
-      labels=list(range(200)))
+  cm = sklearn.metrics.confusion_matrix(out['prediction'][out['testing_idx']],
+                                        out['clustering'][out['testing_idx']],
+                                        labels=list(range(200)))
   measures = measure_from_confusion_matrix(cm.astype(np.uint32))
   miou = measures['assigned_miou']
   vscore = measures['v_score']
@@ -479,7 +476,8 @@ def best_dbscan(
   # run clustering again with best parameters
   out = get_dbscan(eps=result.x[0],
                    min_samples=result.x[1],
-                   geometric_weight=result.x[2])
+                   geometric_weight=result.x[2],
+                   imagenet_weight=result.x[3])
   clustering_based_inference(features=out['features'],
                              geometric_features=out['geometric_features'],
                              imagenet_features=out['imagenet_features'],

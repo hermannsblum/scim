@@ -56,11 +56,20 @@ def get_connected_components(subset, pretrained_model, pred_name, uncert_name,
   anomaly_frames = {}
   for blob in tqdm(data):
     frame = blob['name'].numpy().decode()
-    pred = np.load(os.path.join(directory,
-                                f'{frame}_{pred_name}.npy')).squeeze()
+    try:
+      pred = np.load(os.path.join(directory,
+                                  f'{frame}_{pred_name}.npy')).squeeze()
+    except FileNotFoundError:
+      pred = np.load(os.path.join(directory, f'{frame}_pred.npy')).squeeze()
+    if np.sum(pred != 255) == 0:
+      continue
     pred[pred == 255] = 39
-    uncert = np.load(os.path.join(directory,
-                                  f'{frame}_{uncert_name}.npy')).squeeze()
+    try:
+      uncert = np.load(os.path.join(directory,
+                                    f'{frame}_{uncert_name}.npy')).squeeze()
+    except FileNotFoundError:
+      uncert = np.load(os.path.join(directory,
+                                    f'{frame}_maxlogit-pp.npy')).squeeze()
     pred_shape = pred.shape
     one_hot = np.eye(40)[pred.reshape((-1))].reshape(
         (pred_shape[0], pred_shape[1], 40))
