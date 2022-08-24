@@ -46,16 +46,17 @@ def measure_from_confusion_matrix(cm, is_prediction=False, beta=1.0):
       'assigned_iou': iou,
       'assigned_miou': np.nanmean(iou),
       'assignment': assigned_idx,
+      'confusion_matrix': cm,
   }
   # contingency matrix based sklearn metrics
   # taken from https://github.com/scikit-learn/scikit-learn/blob/baf828ca126bcb2c0ad813226963621cafe38adb/sklearn/metrics/cluster/_supervised.py#L402
-  cm = cm.astype(np.float64)
-  n_total = cm.sum()
-  n_labels = cm.sum(1)
+  cmf = cm.astype(np.float64)
+  n_total = cmf.sum()
+  n_labels = cmf.sum(1)
   n_labels = n_labels[n_labels > 0]
   entropy_labels = -np.sum(
       (n_labels / n_total) * (np.log(n_labels) - np.log(n_total)))
-  n_pred = cm.sum(0)
+  n_pred = cmf.sum(0)
   n_pred = n_pred[n_pred > 0]
   entropy_pred = -np.sum(
       (n_pred / n_total) * (np.log(n_pred) - np.log(n_total)))
@@ -152,20 +153,19 @@ def get_png_measurements_of_method_with_munkres(subset,
 
 def get_measurements(subset, pretrained_id, ignore_other=True):
   directory = os.path.join(EXP_OUT, 'scannet_inference', subset, pretrained_id)
-  frames = [x[:-10] for x in os.listdir(directory) if x.endswith('label.npy')]
+  first_frame = f'{subset}_000000'
   methods = list(
       set(
-          filename.split(frames[0])[-1].split('.')[0][1:]
+          filename.split(first_frame)[-1].split('.')[0][1:]
           for filename in os.listdir(directory)
-          if filename.startswith(frames[0])))
+          if filename.startswith(first_frame)))
   measurements = {}
   for method in methods:
-    frame = sorted(frames)[0]
-    if os.path.exists(os.path.join(directory, f'{frame}_{method}.png')):
+    if os.path.exists(os.path.join(directory, f'{first_frame}_{method}.png')):
       measurements[method] = get_png_measurements_of_method_with_munkres(
           subset, pretrained_id, method, ignore_other=ignore_other)
       continue
-    pred = np.load(os.path.join(directory, f'{frame}_{method}.npy')).squeeze()
+    pred = np.load(os.path.join(directory, f'{first_frame}_{method}.npy')).squeeze()
     if not np.issubdtype(pred.dtype, np.integer) or pred.dtype == np.uint32:
       #print(f'Ignoring {method} because data is not integer type.')
       continue
