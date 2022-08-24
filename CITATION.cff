@@ -1,0 +1,34 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+- family-names: "Blum"
+  given-names: "Hermann"
+  orcid: "https://orcid.org/0000-0002-1713-7877"
+- family-names: "Müller"
+  given-names: "Marcus G"
+- family-names: "Gawel"
+  given-names: "Abel"
+- family-names: "Siegwart"
+  given-names: "Roland"
+- family-names: "Cadena"
+  given-names: "Cesar"
+title: "SCIM: Simultaneous Clustering, Inference, and Mapping for Open-World Semantic Scene Understanding"
+version: 1.0.0
+date-released: 2022-07-19
+url: "https://arxiv.org/abs/2206.10670"
+preferred-citation:
+  type: conference-paper
+  authors:
+  - family-names: "Blum"
+    given-names: "Hermann"
+    orcid: "https://orcid.org/0000-0002-1713-7877"
+  - family-names: "Müller"
+    given-names: "Marcus G"
+  - family-names: "Gawel"
+    given-names: "Abel"
+  - family-names: "Siegwart"
+    given-names: "Roland"
+  - family-names: "Cadena"
+    given-names: "Cesar"
+  title: "SCIM: Simultaneous Clustering, Inference, and Mapping for Open-World Semantic Scene Understanding"
+  year: 2022

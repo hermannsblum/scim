@@ -19,7 +19,9 @@ WORKDIR /semseg
 COPY ./deeplab ./deeplab
 COPY ./setup.py ./setup.py
 COPY ./semsegcluster ./semsegcluster
+# create config if it does not exist
+RUN if [ ! -f semsegcluster/settings.py ]; then echo "EXPERIMENT_STORAGE_FOLDER = '/sacred'\nTMPDIR = '/tmp'\nTMP_DIR =  '/tmp'\nEXP_OUT = '/outputs'" > semsegcluster/settings.py
 # adapt config
-RUN sed -i "s/EXP_OUT.*$/EXP_OUT = '\/cluster\/scratch\/blumh\/clustering_outputs'/g" semsegcluster/settings.py
+RUN sed -i "s/EXP_OUT.*$/EXP_OUT = '/outputs'/g" semsegcluster/settings.py
 RUN python3 -m pip install --ignore-installed .
 WORKDIR /
