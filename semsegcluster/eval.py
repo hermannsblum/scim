@@ -73,9 +73,9 @@ def measure_from_confusion_matrix(cm, is_prediction=False, beta=1.0):
     v_measure_score = ((1 + beta) * homogeneity * completeness /
                        (beta * homogeneity + completeness))
   measurements.update({
-    'homogeneity': homogeneity,
-    'completeness': completeness,
-    'v_score': v_measure_score,
+      'homogeneity': homogeneity,
+      'completeness': completeness,
+      'v_score': v_measure_score,
   })
   return measurements
 
@@ -102,7 +102,9 @@ def get_measurements_of_method(path, method, ignore_other=True):
       label = label[label != 255]
       cm.update(pred, label)
   cm = cm.compute().numpy().astype(np.uint32)
-  return measure_from_confusion_matrix(cm, is_prediction='pred' in method)
+  return measure_from_confusion_matrix(cm,
+                                       is_prediction=('pred' in method or
+                                                      'uhlemeyer' in method))
 
 
 def get_measurements(path, ignore_other=True):
@@ -118,10 +120,10 @@ def get_measurements(path, ignore_other=True):
     frame = sorted(frames)[0]
     pred = np.load(os.path.join(directory, f'{frame}_{method}.npy')).squeeze()
     if not np.issubdtype(pred.dtype, np.integer) or pred.dtype == np.uint32:
-      print(f'Ignoring {method} because data is not integer type.')
+      #print(f'Ignoring {method} because data is not integer type.')
       continue
     if not pred.shape[0] == 480:
-      print(f'Ignoring {method} because shape {pred.shape} does not match.')
+      #print(f'Ignoring {method} because shape {pred.shape} does not match.')
       continue
     measurements[method] = get_measurements_of_method(path,
                                                       method,
