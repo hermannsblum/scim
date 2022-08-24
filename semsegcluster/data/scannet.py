@@ -93,6 +93,8 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
                     scene='25k'),
       *(ScanNetConfig(name=scene_name, scene='val100')
         for scene_name in VAL_100_SCANS),
+      *(ScanNetConfig(name=f'scene{i:04d}_00', scene='0to9')
+        for i in range(10)),
       ScanNetConfig(
           name='0to9',
           description='Frames from scene 0 to 9',
@@ -150,7 +152,7 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
         'full':
             'https://drive.google.com/uc?export=download&id=1E6D0pLqxUHDZCMoStNXlYOHfMekebdEr',
         '0to9':
-            'https://drive.google.com/uc?export=download&id=1rI6t0DYQMENS3dS2PTxulvSKa39Tf1Hq',
+            'https://drive.google.com/uc?id=1rI6t0DYQMENS3dS2PTxulvSKa39Tf1Hq',
     }
 
     if self.builder_config.scene == '25k':
@@ -165,10 +167,12 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
           ),
       ]
     elif self.builder_config.scene == '0to9':
-      extracted = dl_manager.download_and_extract(urls['0to9'])
+      #extracted = dl_manager.download_and_extract(urls['0to9'])
+      extracted = dl_manager.extract(
+          os.path.join(dl_manager.manual_dir, 'scannet_scenes_0to9.zip'))
       return [
           tfds.core.SplitGenerator(
-              name=tfds.Split.TRAIN,
+              name=tfds.Split.VALIDATION,
               gen_kwargs={
                   'data_path': os.path.join(extracted, '0to9'),
               },
@@ -187,11 +191,11 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
       ]
     extracted = dl_manager.download_and_extract(urls['full'])
     return [
-        tfds.core.SplitGenerator(
-            name=tfds.Split.TRAIN,
-            gen_kwargs={
-                'data_path': os.path.join(extracted, 'scannet'),
-            })
+        tfds.core.SplitGenerator(name=tfds.Split.TRAIN,
+                                 gen_kwargs={
+                                     'data_path':
+                                         os.path.join(extracted, 'scannet'),
+                                 })
     ]
 
   def _generate_examples(self, data_path):
@@ -204,12 +208,12 @@ class ScanNet(tfds.core.GeneratorBasedBuilder):
         continue
       if scene_dir in VAL_100_SCANS and self.builder_config.scene != 'val100':
         continue
-      if (self.builder_config.scene == 'val100' and
-          self.builder_config.name != 'val100' and
+      if (self.builder_config.name.startswith('scene') and
           scene_dir != self.builder_config.name):
         continue
-      for file_name in sorted(
-          tf.io.gfile.listdir(os.path.join(data_path, scene_dir, 'color'))):
+      for file_name in sorted(tf.io.gfile.listdir(
+          os.path.join(data_path, scene_dir, 'color')),
+                              key=lambda x: int(x.split('.')[0])):
         subsampler += 1
         if (self.builder_config.subsampling is not None) and (
             subsampler % self.builder_config.subsampling != 0):

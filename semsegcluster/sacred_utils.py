@@ -3,6 +3,7 @@ import incense
 import torch
 import os
 import semsegcluster.settings as settings
+from semsegcluster.gdrive import load_gdrive_file
 
 
 def get_observer():
@@ -45,6 +46,8 @@ def get_checkpoint(pretrained_model, pthname=None):
       # pretrained model is a google drive id
       checkpoint = torch.load(load_gdrive_file(pretrained_model, ending='pth'))
       pretrained_id = pretrained_model
+      if 'state_dict' in checkpoint:
+        checkpoint = checkpoint['state_dict']
   elif pretrained_model and isinstance(pretrained_model, int):
     loader = get_incense_loader()
     train_exp = loader.find_by_id(pretrained_model)

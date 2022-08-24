@@ -7,6 +7,7 @@ import tensorflow as tf
 import os
 import cv2
 import shutil
+from collections import OrderedDict
 import pickle
 import numpy as np
 from tqdm import tqdm
@@ -35,6 +36,12 @@ def load_checkpoint(model, state_dict, strict=True):
     new_state_dict = OrderedDict()
     for k, v in state_dict.items():
       new_state_dict[k[7:]] = v
+    model.load_state_dict(new_state_dict, strict=strict)
+  elif (not next(iter(model.state_dict())).startswith('_model._model')) and (
+      next(iter(state_dict)).startswith('_model._model')):
+    new_state_dict = OrderedDict()
+    for k, v in state_dict.items():
+      new_state_dict[k[14:]] = v
     model.load_state_dict(new_state_dict, strict=strict)
   else:
     model.load_state_dict(state_dict, strict=strict)
@@ -159,7 +166,11 @@ def run_knn(
 
 
 @ex.main
-def run_deeplab(pretrained_model, subset, split='validation', device='cuda', ignore_other=True):
+def run_deeplab(pretrained_model,
+                subset,
+                split='validation',
+                device='cuda',
+                ignore_other=True):
   data = tfds.load(f'scan_net/{subset}', split=split)
 
   # MODEL SETUP
@@ -171,7 +182,7 @@ def run_deeplab(pretrained_model, subset, split='validation', device='cuda', ign
       aux_loss=None)
   checkpoint, pretrained_id = get_checkpoint(pretrained_model)
   # remove any aux classifier stuff
-  removekeys = [k for k in checkpoint.keys() if k.startswith('aux_classifier')]
+  removekeys = [k for k in checkpoint.keys() if 'aux_classifier' in k]
   for k in removekeys:
     del checkpoint[k]
   load_checkpoint(model, checkpoint)
@@ -213,20 +224,12 @@ def run_deeplab(pretrained_model, subset, split='validation', device='cuda', ign
 
     # store outputs
     name = blob['name'].numpy().decode()
-    np.save(os.path.join(directory, f'{name}_pred.npy'),
-            pred[0].detach().to('cpu').numpy())
-    np.save(os.path.join(directory, f'{name}_entropy.npy'),
-            softmax_entropy[0].detach().to('cpu').numpy())
+    out = pred[0].detach().to('cpu').numpy().astype(np.uint8)
+    # 0 is magic number for outlier or nan
+    out += 1
+    cv2.imwrite(os.path.join(directory, f'{name}_pred.png'), out)
     np.save(os.path.join(directory, f'{name}_maxlogit-pp.npy'),
             -max_logit[0].detach().to('cpu').numpy())
-    np.save(os.path.join(directory, f'{name}_label.npy'), label)
-
-    if 'instances' in blob:
-      instances = tf.cast(blob['instances'], tf.int64)
-      # the output is 4 times smaller than the input, so transform labels
-      instances = tf.image.resize(instances[..., tf.newaxis], (120, 160),
-                                  method='nearest')[..., 0].numpy()
-      np.save(os.path.join(directory, f'{name}_instances.npy'), instances)
 
   cm = cm.compute().numpy()
   np.save(os.path.join(directory, 'confusion_matrix.npy'), cm)
