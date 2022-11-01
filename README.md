@@ -143,7 +143,20 @@ cd scim && python -m pip install -e .
 
 ## Mapping
 
-For mapping, we rely on an [existing mapping framework](https://github.com/ethz-asl/panoptic_mapping). This is implemented in ROS. To install the framework into a ROS workspace, run:
+For mapping, we rely on an [existing mapping framework](https://github.com/ethz-asl/panoptic_mapping). This is implemented in ROS.
+
+First, create a catkin workspace:
+```bash
+sudo apt-get install python3-catkin-tools
+mkdir -p ~/catkin_ws/src
+cd ~/catkin_ws
+catkin init
+catkin config --extend /opt/ros/noetic
+catkin config --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
+catkin config --merge-devel
+```
+
+Then install the framework into a catkin workspace:
 ```bash
 wstool init \
   && git clone --branch hermann-devel https://github.com/ethz-asl/panoptic_mapping.git \
