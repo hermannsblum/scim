@@ -133,3 +133,6 @@ ws_py/
 semsegcluster/settings.py
 .vscode/
 *.simg
+
+# wandb
+wandb/

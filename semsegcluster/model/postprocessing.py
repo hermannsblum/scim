@@ -4,21 +4,22 @@ import numpy as np
 import math
 from kornia.morphology import dilation, erosion
 from scipy import ndimage as ndi
+import os
 
 
-selem = torch.ones((3, 3)).cuda()
-selem_dilation = torch.FloatTensor(ndi.generate_binary_structure(2, 1)).cuda()
+selem = torch.ones((3, 3))
+selem_dilation = torch.FloatTensor(ndi.generate_binary_structure(2, 1))
 
 # NOTE(shjung13): Dilation filters to expand the boundary maps (L1)
-d_k1 = torch.zeros(( 2 * 1 + 1, 2 * 1 + 1)).cuda()
-d_k2 = torch.zeros(( 2 * 2 + 1, 2 * 2 + 1)).cuda()
-d_k3 = torch.zeros(( 2 * 3 + 1, 2 * 3 + 1)).cuda()
-d_k4 = torch.zeros(( 2 * 4 + 1, 2 * 4 + 1)).cuda()
-d_k5 = torch.zeros(( 2 * 5 + 1, 2 * 5 + 1)).cuda()
-d_k6 = torch.zeros(( 2 * 6 + 1, 2 * 6 + 1)).cuda()
-d_k7 = torch.zeros(( 2 * 7 + 1, 2 * 7 + 1)).cuda()
-d_k8 = torch.zeros(( 2 * 8 + 1, 2 * 8 + 1)).cuda()
-d_k9 = torch.zeros(( 2 * 9 + 1, 2 * 9 + 1)).cuda()
+d_k1 = torch.zeros(( 2 * 1 + 1, 2 * 1 + 1))
+d_k2 = torch.zeros(( 2 * 2 + 1, 2 * 2 + 1))
+d_k3 = torch.zeros(( 2 * 3 + 1, 2 * 3 + 1))
+d_k4 = torch.zeros(( 2 * 4 + 1, 2 * 4 + 1))
+d_k5 = torch.zeros(( 2 * 5 + 1, 2 * 5 + 1))
+d_k6 = torch.zeros(( 2 * 6 + 1, 2 * 6 + 1))
+d_k7 = torch.zeros(( 2 * 7 + 1, 2 * 7 + 1))
+d_k8 = torch.zeros(( 2 * 8 + 1, 2 * 8 + 1))
+d_k9 = torch.zeros(( 2 * 9 + 1, 2 * 9 + 1))
 
 d_ks = {
     1: d_k1,
@@ -168,3 +169,16 @@ class BoundarySuppressionWithSmoothing(nn.Module):
         out = x
 
     return out.squeeze(1)
+
+def standardize_max_logits(pred, logits, mean, sigma):
+  """
+    Standardize logits by subtracting mean and dividing by sigma
+    """
+  # check input data
+  assert mean.size == sigma.size
+  assert mean.size != 0
+
+  for idx in range(mean.size):
+    if sigma[idx] != 0:
+      logits = torch.where((pred == idx), (logits - mean[idx])/sigma[idx], logits)
+  return logits
