@@ -114,7 +114,6 @@ def train(
     if is_png:
       label = cv2.imread(os.path.join(directory, f'{idx:06d}_{pseudolabels}.png'),
                          cv2.IMREAD_ANYDEPTH).squeeze().astype(np.int32)
-      label -= 1
     else:
       label = np.load(os.path.join(directory,
                                    f'{idx:06d}_{pseudolabels}.npy')).squeeze()
@@ -148,7 +147,6 @@ def train(
         label = cv2.imread(
             os.path.join(directory, f'{idx:06d}_{pseudolabels}.png'),
             cv2.IMREAD_ANYDEPTH).squeeze().astype(np.int32)
-        label -= 1
       else:
         label = np.load(os.path.join(directory,
                                      f'{idx:06d}_{pseudolabels}.npy')).squeeze()

@@ -71,7 +71,7 @@ class DeltaYStopper(EarlyStopper):
 @memory.cache
 def get_distances(subset, shard, subsample, device, pretrained_model,
                   feature_name, pred_name, uncert_name, uncertainty_threshold,
-                  expected_feature_shape, normalize, use_euler):
+                  expected_feature_shape, normalize, use_euler, num_classes):
   out = get_sampling_idx(subset=subset,
                          shard=shard,
                          subsample=subsample,
@@ -90,7 +90,8 @@ def get_distances(subset, shard, subsample, device, pretrained_model,
                              pred_name=pred_name,
                              uncert_name=uncert_name,
                              use_euler=use_euler,
-                             use_mapping=False))
+                             use_mapping=False,
+                             num_classes=num_classes))
   if normalize:
     out['features'] = sklearn.preprocessing.normalize(out['features'])
   out['distances'] = sp.spatial.distance.pdist(out['features'],
@@ -123,7 +124,7 @@ def distance_preprocessing(subset, shard, subsample, device, pretrained_model,
                            feature_name, pred_name, uncert_name,
                            uncertainty_threshold, expected_feature_shape,
                            normalize, apply_scaling, same_voxel_close,
-                           distance_activation_factor, use_euler, _run):
+                           distance_activation_factor, use_euler, num_classes, _run):
   out = get_distances(subset=subset,
                       shard=shard,
                       subsample=subsample,
@@ -135,7 +136,8 @@ def distance_preprocessing(subset, shard, subsample, device, pretrained_model,
                       uncertainty_threshold=uncertainty_threshold,
                       expected_feature_shape=expected_feature_shape,
                       normalize=normalize,
-                      use_euler=use_euler)
+                      use_euler=use_euler,
+                      num_classes=num_classes)
   # now generate distance matrix
   if apply_scaling:
     # first scale such that 90% of inliers of same class are below 1
@@ -162,7 +164,7 @@ def distance_preprocessing(subset, shard, subsample, device, pretrained_model,
 
 @ex.capture
 def clustering_based_inference(features, clustering, subset, pretrained_model,
-                               feature_name, device, normalize, use_euler, _run):
+                               feature_name, device, normalize, use_euler, num_classes, _run):
   # set up NN index to find closest clustered sample
   knn = hnswlib.Index(space='l2', dim=256)
   knn.init_index(max_elements=features.shape[0],
@@ -176,7 +178,8 @@ def clustering_based_inference(features, clustering, subset, pretrained_model,
     data = tfds.load(f'{subset}', split='validation')
   model, hooks = get_deeplab(pretrained_model=pretrained_model,
                              feature_name=feature_name,
-                             device=device)
+                             device=device,
+                             num_classes=num_classes)
   # make sure the directory exists
   _, pretrained_id = get_checkpoint(pretrained_model)
   directory = os.path.join(EXP_OUT, 'oaisys_inference', subset, pretrained_id)
@@ -253,44 +256,6 @@ dbscan_dimensions = [
 ]
 
 
-@ex.capture
-def get_dbscan(apply_scaling, same_voxel_close, distance_activation_factor, eps,
-               min_samples):
-  out = distance_preprocessing(
-      apply_scaling=apply_scaling,
-      same_voxel_close=same_voxel_close,
-      distance_activation_factor=distance_activation_factor)
-  clusterer = sklearn.cluster.DBSCAN(eps=eps,
-                                     min_samples=min_samples,
-                                     metric='precomputed')
-
-  adjacency = out['adjacency']
-  del out
-  clustering = clusterer.fit_predict(adjacency)
-  out = distance_preprocessing(
-      apply_scaling=apply_scaling,
-      same_voxel_close=same_voxel_close,
-      distance_activation_factor=distance_activation_factor)
-  out['clustering'] = clustering
-  return out
-
-
-@use_named_args(dimensions=dbscan_dimensions)
-def score_dbscan(same_voxel_close, eps, min_samples):
-  out = get_dbscan(same_voxel_close=same_voxel_close,
-                   eps=eps,
-                   min_samples=min_samples)
-  out['clustering'][out['clustering'] == -1] = 14
-  # cluster numbers larger than 200 are ignored in the confusion  matrix
-  out['clustering'][out['clustering'] > 200] = 14
-  cm = sklearn.metrics.confusion_matrix(out['prediction'][out['testing_idx']],
-                                        out['clustering'][out['testing_idx']],
-                                        labels=list(range(200)))
-  miou = measure_from_confusion_matrix(cm.astype(np.uint32))['assigned_miou']
-  print(f'{miou=:.3f}')
-  return -1.0 * (0.0 if np.isnan(miou) else miou)
-
-
 ex.add_config(
     subsample=100,
     shard=5,
@@ -307,10 +272,11 @@ ex.add_config(
     normalize=True,
     use_euler=False,
     subset='oaisys_trajectory',
+    num_classes=15,
 )
 
 
-@ex.command
+@ex.main
 def best_hdbscan(
     _run,
     ignore_other,
@@ -357,67 +323,6 @@ def best_hdbscan(
   clustering_based_inference(features=out['features'],
                              clustering=out['clustering'])
 
-
-@ex.command
-def best_dbscan(_run, n_calls, subset, use_euler):
-  if use_euler:
-    os.system(f'mkdir {TMPDIR}/datasets')
-    os.system(f'tar -C {TMPDIR}/datasets -xvf /cluster/project/cvg/students/loewsi/datasets/{subset}.tar')
-  # run optimisation
-  timer = TimerCallback()
-  result = gp_minimize(func=score_dbscan,
-                       dimensions=dbscan_dimensions,
-                       callback=[
-                           DeltaYStopper(delta=0.002, n_minimum=100, n_best=10),
-                           timer,
-                       ],
-                       n_calls=n_calls,
-                       n_initial_points=30 if n_calls > 50 else 10,
-                       random_state=4)
-  print(
-      f"Optimisation took {np.mean(timer.iter_time):.3f}s on average, total {len(timer.iter_time)} iters."
-  )
-  _run.info['best_miou'] = -result.fun
-  _run.info['same_voxel_close'] = result.x[0]
-  _run.info['eps'] = result.x[1]
-  _run.info['min_samples'] = result.x[2]
-  # run clustering again with best parameters
-  out = get_dbscan(same_voxel_close=result.x[0], eps=result.x[1], min_samples=result.x[2])
-  clustering_based_inference(features=out['features'],
-                             clustering=out['clustering'])
-
-
-
-
-@ex.main
-def dbscan(
-    _run,
-    ignore_other,
-    min_cluster_size,
-    pretrained_model,
-    device,
-    eps,
-    min_samples,
-    use_hdbscan,
-    apply_scaling,
-    same_voxel_close,
-    distance_activation_factor,
-    subset,
-    use_euler,
-):
-  if use_euler:
-    os.system(f'mkdir {TMPDIR}/datasets')
-    os.system(f'tar -C {TMPDIR}/datasets -xvf /cluster/project/cvg/students/loewsi/datasets/{subset}.tar')
-  if use_hdbscan:
-    out = get_hdbscan(apply_scaling, same_voxel_close,
-                      distance_activation_factor, min_cluster_size)
-  else:
-    out = get_dbscan(apply_scaling, same_voxel_close,
-                     distance_activation_factor, eps, min_samples)
-  cm = sklearn.metrics.confusion_matrix(out['prediction'], out['clustering'])
-  _run.info['clustering_measurements'] = measure_from_confusion_matrix(cm)
-  clustering_based_inference(features=out['features'],
-                             clustering=out['clustering'])
 
 
 if __name__ == '__main__':

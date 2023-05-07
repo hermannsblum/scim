@@ -39,7 +39,8 @@ ex.add_config(
     dataset='oaisys16k_rugd',
     device='cuda',
     use_euler=False,
-    num_classes=15
+    num_classes=15,
+    training_set='oaisys16k_rugd',
 )
 
 def data_converter_rugd(image, label):
@@ -79,7 +80,7 @@ def data_converter_rugd(image, label):
 
 
 @ex.main
-def normailize_max_logit_oaisys(dataset, pretrained_model, device, num_classes, use_euler):
+def normailize_max_logit_oaisys(dataset, pretrained_model, device, num_classes, use_euler, training_set):
   if use_euler:
     os.system(f'mkdir {TMPDIR}/datasets')
     os.system(f'tar -C {TMPDIR}/datasets -xvf /cluster/project/cvg/students/loewsi/datasets/{dataset}.tar')
@@ -113,6 +114,9 @@ def normailize_max_logit_oaisys(dataset, pretrained_model, device, num_classes, 
     del checkpoint[k]
   load_checkpoint(model, checkpoint)
 
+  training_directory = os.path.join(EXP_OUT, 'oaisys_inference', f'{training_set}', pretrained_id)
+  num_labels = np.load(os.path.join(training_directory, 'num_labels.npy'))
+  
   model.to(device)
   model.eval()
 
@@ -136,6 +140,8 @@ def normailize_max_logit_oaisys(dataset, pretrained_model, device, num_classes, 
     if num_labels[idx]!=0:
       mean_max_logit[idx]=sum_max_logit[idx]/num_labels[idx]
   # store outputs
+  np.save(os.path.join(directory, f'num_labels.npy'),
+          num_labels)
   np.save(os.path.join(directory, f'mean_max_logit.npy'),
           mean_max_logit)
   sum_max_logit_dist=np.zeros(num_classes)

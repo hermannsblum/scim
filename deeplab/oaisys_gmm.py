@@ -2,6 +2,7 @@ from sacred import Experiment
 from joblib import Memory
 import numpy as np
 import torch
+import cv2
 import tensorflow_datasets as tfds
 import tensorflow as tf
 from tqdm import tqdm
@@ -56,6 +57,8 @@ def gmm_predict(
     feature_name,
     subsample,
     num_classes,
+    normalize,
+    expected_feature_shape,
 ):
   # setup euler
   if use_euler:
@@ -85,7 +88,7 @@ def gmm_predict(
                                            drop_last=True)
 
   # setup deeplab
-  model, _ = get_deeplab(pretrained_model=pretrained_model,
+  model, hooks = get_deeplab(pretrained_model=pretrained_model,
                              feature_name=feature_name,
                              device=device,
                              num_classes=num_classes)
@@ -98,13 +101,22 @@ def gmm_predict(
   # INFERENCE
   for idx, (image, _) in enumerate(tqdm(data_loader)):
     # run inference
-    logits = model(image.to(device))['out'] 
-    logits = logits.permute(0, 2, 3, 1).reshape(-1, num_classes).detach().to('cpu').numpy()
+    print(image.shape)
+    logits = model(image.to(device))['out']
 
+    # get features
+    features = hooks['feat']
+    if normalize:
+      features = torch.nn.functional.normalize(features, dim=1)
+    features = features.to('cpu').detach().numpy().transpose([0, 2, 3, 1])
+    assert features.shape[-1] == 256
+    features = features.reshape((-1, 256))
+    features = torch.tensor(features)
     # predict gmm
-    features = torch.tensor(logits)
     gmm_pred = gmm_model.predict(features).detach().to('cpu').numpy()
-    gmm_pred = gmm_pred.reshape(480, 640)
+    gmm_pred = gmm_pred.reshape((expected_feature_shape[0], expected_feature_shape[1]))
+    gmm_pred = cv2.resize(gmm_pred, (640, 480),
+                              interpolation=cv2.INTER_NEAREST)
     # save output
     np.save(os.path.join(directory, f'{idx:06d}_gmm_pred_{subsample}_{num_classes}.npy'),
             gmm_pred)
@@ -112,7 +124,9 @@ def gmm_predict(
 
     # predict max log prob
     gmm_max_log_prob = gmm_model.predict_max_log_prob(features).detach().to('cpu').numpy()
-    gmm_max_log_prob = gmm_max_log_prob.reshape(480, 640)
+    gmm_max_log_prob = gmm_max_log_prob.reshape((expected_feature_shape[0], expected_feature_shape[1]))
+    gmm_max_log_prob = cv2.resize(gmm_max_log_prob, (640, 480),
+                              interpolation=cv2.INTER_NEAREST)
     # save output
     np.save(os.path.join(directory, f'{idx:06d}_gmm_max_log_prob_{subsample}_{num_classes}.npy'),
             gmm_max_log_prob)
@@ -134,6 +148,7 @@ def gmm_fit(
     split,
     num_classes,
     batch_size,
+    normalize,
 ):
   # setup euler data
   if use_euler:
@@ -141,7 +156,7 @@ def gmm_fit(
     os.system(f'tar -C {TMPDIR}/datasets -xvf /cluster/project/cvg/students/loewsi/datasets/{subset}.tar')
   
   # deeplab setup
-  model, _ = get_deeplab(pretrained_model=pretrained_model,
+  model, hooks = get_deeplab(pretrained_model=pretrained_model,
                              feature_name=feature_name,
                              device=device,
                              num_classes=num_classes)
@@ -166,40 +181,34 @@ def gmm_fit(
       use_mapping=False,
       split=split)['sampling_idx']
   
-  # get all logits
-  num_features = np.zeros(num_classes, dtype=int)
-  sum_features = np.zeros((num_classes, num_classes))
-  all_logits = []
+  # get all features
+  all_features = []
 
   for idx, (image, _) in tqdm(enumerate(data_loader)):
     frame= f'{idx}'
     # run inference
     logits = model(image.to(device))['out']
+    # get features
+    features = hooks['feat']
+    if normalize:
+      features = torch.nn.functional.normalize(features, dim=1)
+    features = features.to('cpu').detach().numpy().transpose([0, 2, 3, 1])
+    assert features.shape[-1] == 256
+    features = features.reshape((-1, 256))
+    # get predictions
     logits = logits.permute(0, 2, 3, 1).reshape(-1, num_classes)
     _, pred = torch.max(logits, 1)
-    pred = pred.permute(1, 2, 0).reshape(-1, 1)
-    # get logits for sampled pixels
+    # get features for sampled pixels
     samples = sampling_idx[frame]
-    out_logits = logits.detach().to('cpu').numpy()[samples]
-    all_logits.append(out_logits)
-    # calculate mean features as initialisation for gmm
-    for i in range(0, num_classes):
-      num_features[i] += (pred==i).sum()
-      sum_features[i] += logits[(pred==i).reshape(-1)].sum(dim=0).detach().to('cpu').numpy()
-
-  # calculate mean features as initialisation for gmm
-  mean_features = np.zeros((num_classes, num_classes))
-  for idx in range(num_classes):
-    if num_features[idx]!=0:
-      mean_features[idx]=sum_features[idx]/num_features[idx]
-  mean_features = torch.tensor(mean_features)[None,:]
+    out_features = features[samples]
+    all_features.append(out_features)
 
   # initialise gmm
-  gmm_model = GaussianMixture(n_components=n_components, n_features=num_classes, covariance_type='diag', mu_init=mean_features)
+  gmm_model = GaussianMixture(n_components=n_components, n_features=256, covariance_type='diag')
 
   # fit gmm
-  logits = torch.tensor(np.concatenate(all_logits, axis=0))
-  gmm_model.fit(logits)
+  features = torch.tensor(np.concatenate(all_features, axis=0))
+  gmm_model.fit(features)
 
   # save model parameters
   _, pretrained_id = get_checkpoint(pretrained_model)

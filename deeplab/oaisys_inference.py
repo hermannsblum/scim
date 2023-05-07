@@ -18,81 +18,9 @@ from semsegcluster.settings import EXP_OUT
 from semsegcluster.sacred_utils import get_checkpoint
 from semsegcluster.model.postprocessing import BoundarySuppressionWithSmoothing, standardize_max_logits
 from semsegcluster.data.tfds_to_torch import TFDataIterableDataset
-
+from deeplab.oaisys_utils import data_converter_rugd, OAISYS_LABELS, load_checkpoint
 
 ex = Experiment()
-
-OAISYS_LABELS = [
-    'Dirt', 'Grass', 'Tree', 'Object', 'Water', 'Sky', 'Gravel', 'Mulch', 'Bedrock', 'Log', 'Rock', 'Empty_1', 'Empty_2', 'Empty_4', 'Empty_5', 'Sand'
-]
-
-def data_converter_rugd(image, label):
-  image = convert_img_to_float(image)
-  label = tf.squeeze(tf.cast(label, tf.int64))
-
-  label = tf.where(label == 0, tf.cast(255, tf.int64), label)
-  label = tf.where(label == 1, tf.cast(0, tf.int64), label)
-  label = tf.where(label == 3, tf.cast(1, tf.int64), label)
-  label = tf.where(label == 9, tf.cast(3, tf.int64), label)
-  label = tf.where(label == 15, tf.cast(9, tf.int64), label)
-  label = tf.where(label == 2, tf.cast(15, tf.int64), label)
-  label = tf.where(label == 4, tf.cast(2, tf.int64), label)
-  label = tf.where(label == 5, tf.cast(3, tf.int64), label)
-  label = tf.where(label == 6, tf.cast(4, tf.int64), label)
-  label = tf.where(label == 7, tf.cast(5, tf.int64), label)
-  label = tf.where(label == 8, tf.cast(3, tf.int64), label)
-  label = tf.where(label == 10, tf.cast(255, tf.int64), label)
-  label = tf.where(label == 11, tf.cast(6, tf.int64), label)
-  label = tf.where(label == 12, tf.cast(255, tf.int64), label)
-  label = tf.where(label == 13, tf.cast(7, tf.int64), label)
-  label = tf.where(label == 14, tf.cast(8, tf.int64), label)
-  label = tf.where(label == 16, tf.cast(3, tf.int64), label)
-  label = tf.where(label == 17, tf.cast(3, tf.int64), label)
-  label = tf.where(label == 18, tf.cast(3, tf.int64), label)
-  label = tf.where(label == 19, tf.cast(2, tf.int64), label)
-  label = tf.where(label == 20, tf.cast(3, tf.int64), label)
-  label = tf.where(label == 21, tf.cast(10, tf.int64), label)
-  label = tf.where(label == 22, tf.cast(255, tf.int64), label)
-  label = tf.where(label == 23, tf.cast(255, tf.int64), label)
-  label = tf.where(label == 24, tf.cast(3, tf.int64), label)
-  label = tf.where(label > 15, tf.cast(1, tf.int64), label)  # grass label where labeled wrong by oaisys postprocessing
-
-  # move channel from last to 2nd
-  image = tf.transpose(image, perm=[2, 0, 1])
-  return image, label
-
-
-def load_checkpoint(model, state_dict, strict=True):
-  """Load Checkpoint from Google Drive."""
-  # if we currently don't use DataParallel, we have to remove the 'module' prefix
-  # from all weight keys
-  if (not next(iter(model.state_dict())).startswith('module')) and (next(
-      iter(state_dict)).startswith('module')):
-    new_state_dict = OrderedDict()
-    for k, v in state_dict.items():
-      new_state_dict[k[7:]] = v
-    model.load_state_dict(new_state_dict, strict=strict)
-  else:
-    model.load_state_dict(state_dict, strict=strict)
-
-
-@ex.command
-def run_sml(fitting_experiment, subset, device='cuda'):
-  raise NotImplementedError("run_sml not implemented for OAISYS dataset yet!")
-  
-
-
-@ex.command
-def run_knn(
-    fitting_experiment,
-    subset,
-    device='cuda',
-    ef=200,
-    k=1,
-    feature_name='classifier.2',
-):
-  raise NotImplementedError("run_knn not implemented for OAISYS dataset yet!")
-
 
 @ex.main
 def run_deeplab(
@@ -101,9 +29,11 @@ def run_deeplab(
     device='cuda', 
     set='oaisys_trajectory', 
     ignore_other=True, 
-    normalize_max_logits=True, 
+    normalize_max_logits=False, 
     training_set=None, 
-    validation_plots=False
+    validation_plots=False,
+    postfix='',
+    num_classes=15,
 ):
   # WRITER SETUP
   if validation_plots:
@@ -122,7 +52,7 @@ def run_deeplab(
       pretrained=False,
       pretrained_backbone=False,
       progress=True,
-      num_classes=15,
+      num_classes=num_classes,
       aux_loss=None)
   checkpoint, pretrained_id = get_checkpoint(pretrained_model)
   # remove any aux classifier stuff
@@ -154,6 +84,8 @@ def run_deeplab(
       mean_logits = np.load(os.path.join(training_directory, 'mean_max_logit.npy'))
       sigma_logits = np.load(os.path.join(training_directory, 'sigma_max_logit.npy'))
       max_logit = standardize_max_logits(pred=pred, logits=max_logit, mean=mean_logits, sigma=sigma_logits)
+      if postfix == '':
+        postfix = '_norm'
     elif normalize_max_logits and training_set is None:
       raise ValueError("Cannot normalize max logits without training set!")
     max_logit = postprocessing(max_logit, prediction=pred)
@@ -164,7 +96,7 @@ def run_deeplab(
     cm.update(valid_pred, valid_label)
 
     # store outputs
-    name = idx
+    name = f'{idx}{postfix}'
     np.save(os.path.join(directory, f'{name}_pred.npy'),
             pred[0].detach().to('cpu').numpy())
     np.save(os.path.join(directory, f'{name}_entropy.npy'),
@@ -183,12 +115,12 @@ def run_deeplab(
 
   # CONFUSION MATRIX
   cm = cm.compute().numpy()
-  np.save(os.path.join(directory, 'confusion_matrix.npy'), cm)
+  np.save(os.path.join(directory, f'confusion_matrix{postfix}.npy'), cm)
   disp = ConfusionMatrixDisplay(cm / cm.sum(0),
                                 display_labels=OAISYS_LABELS)
   plt.figure(figsize=(20, 20))
   disp.plot(ax=plt.gca(), xticks_rotation='vertical', include_values=False)
-  plt.savefig(os.path.join(directory, 'confusion_matrix.pdf'))
+  plt.savefig(os.path.join(directory, f'confusion_matrix{postfix}.pdf'))
 
 
 if __name__ == '__main__':

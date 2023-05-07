@@ -56,6 +56,19 @@ class SegmentationMetric(object):
     mIoU = IoU.mean()
     return pixAcc, mIoU
 
+  def get_result(self):
+    """Gets the current evaluation result.
+        Returns
+        -------
+        metrics : tuple float, float, list
+            pixAcc, mIoU, IoU of classes
+        """
+    pixAcc = 1.0 * self.total_correct / (np.spacing(1) + self.total_label)
+    IoU = 1.0 * self.total_inter / (np.spacing(1) + self.total_union)
+    # It has same result with np.nanmean() when all class exist
+    mIoU = IoU.mean()
+    return pixAcc, mIoU, IoU
+
   def evaluate_worker(self, pred, label):
     correct, labeled = batch_pix_accuracy(pred, label)
     inter, union = batch_intersection_union(pred, label, self.nclass)

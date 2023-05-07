@@ -16,6 +16,7 @@ from collections import OrderedDict
 from semsegcluster.data.images import convert_img_to_float
 from semsegcluster.settings import TMPDIR, EXP_OUT
 from semsegcluster.sacred_utils import get_checkpoint
+from oaisys_training_euler import data_converter_rugd
 
 memory = Memory(EXP_OUT)
 
@@ -33,12 +34,12 @@ def load_checkpoint(model, state_dict, strict=True):
     model.load_state_dict(state_dict, strict=strict)
 
 
-def get_deeplab(pretrained_model, feature_name, device):
+def get_deeplab(pretrained_model, feature_name, device, num_classes=15):
   model = torchvision.models.segmentation.deeplabv3_resnet101(
       pretrained=False,
       pretrained_backbone=False,
       progress=True,
-      num_classes=15,
+      num_classes=num_classes,
       aux_loss=False)
   checkpoint, pretrained_id = get_checkpoint(pretrained_model)
   # remove any aux classifier stuff
@@ -65,12 +66,7 @@ def get_deeplab(pretrained_model, feature_name, device):
       m.register_forward_hook(get_activation(feature_name))
   return model, hooks
 
-
-def get_resnet(feature_name, device):
-  model = torchvision.models.resnet101(pretrained=True)
-  model.to(device)
-  model.eval()
-
+def get_deeplab_hooks(model, feature_name):
   # Create hook to get features from intermediate pytorch layer
   hooks = {}
 
@@ -85,7 +81,8 @@ def get_resnet(feature_name, device):
   for n, m in model.named_modules():
     if n == feature_name:
       m.register_forward_hook(get_activation(feature_name))
-  return model, hooks
+  return hooks
+
 
 
 def get_dino(device):
@@ -106,53 +103,20 @@ def dino_color_normalize(x,
 
 @memory.cache
 def get_sampling_idx(subset, shard, subsample, pretrained_model,
-                     expected_feature_shape, use_euler, use_mapping=True):
+                     expected_feature_shape, use_euler, use_mapping=True, split='validation'):
   rng = default_rng(35643243)
   if use_euler:
-    data = tfds.load(f'{subset}', split='validation', data_dir=f'{TMPDIR}/datasets')
+    data = tfds.load(f'{subset}', split=split, data_dir=f'{TMPDIR}/datasets')
   else:
-    data = tfds.load(f'{subset}', split='validation')
+    data = tfds.load(f'{subset}', split=split)
   _, pretrained_id = get_checkpoint(pretrained_model)
   directory = os.path.join(EXP_OUT, 'oaisys_inference', subset, pretrained_id)
 
   sampling_idx = {}
   all_voxels = np.array([], dtype=np.int32)
   for idx in tqdm(range(len(data))):
-    if use_mapping:
-      frame = f'143_entropy.npy_{idx:06d}'
-      try:
-        voxel = np.load(os.path.join(
-            directory,
-            f'{frame}_pseudolabel-voxels.npy')).squeeze().astype(np.int32)
-      except FileNotFoundError:
-        print(f'No voxels found, skipping frame {frame}')
-        continue
-      # interpolate to feature size
-      # reshapes to have array <feature_width * feature_height, list of voxels>
-      voxel = voxel.reshape(
-          (expected_feature_shape[0], voxel.shape[0] // expected_feature_shape[0],
-          expected_feature_shape[1],
-          voxel.shape[1] // expected_feature_shape[1]))
-      voxel = np.swapaxes(voxel, 1, 2).reshape(
-          (expected_feature_shape[0] * expected_feature_shape[1], -1))
-      # subsampling (because storing all these embeddings would be too much)
-      # first subsample from voxels that we have already sampled
-      already_sampled = np.logical_and(np.isin(voxel, all_voxels), voxel != 0)
-      assert len(already_sampled.shape) == 2
-      already_sampled_idx = already_sampled.max(-1)
-    else:
-      frame = f'{idx}'
-    if False:
-      #if already_sampled_idx.sum() > 0:
-      # sample 10% from known voxels
-      sampled_idx = np.flatnonzero(already_sampled_idx)
-      if sampled_idx.shape[0] > subsample // 10:
-        # reduce to a subset
-        sampled_idx = rng.choice(sampled_idx,
-                                 size=[subsample // 10],
-                                 replace=False)
-    else:
-      sampled_idx = np.array([], dtype=np.int32)
+    frame = f'{idx}'
+    sampled_idx = np.array([], dtype=np.int32)
     # now add random samples
     sampled_idx = np.concatenate(
         (sampled_idx,
@@ -160,13 +124,6 @@ def get_sampling_idx(subset, shard, subsample, pretrained_model,
                     size=[subsample - sampled_idx.shape[0]],
                     replace=False)),
         axis=0)
-    # if a feature corresponds to multiple voxels, favor those that are already sampled
-    if use_mapping:
-      already_sampled = already_sampled[sampled_idx]
-      all_voxels = np.concatenate(
-          (all_voxels, voxel[sampled_idx,
-                            np.argmax(already_sampled, axis=1)]),
-          axis=0)
     sampling_idx[frame] = sampled_idx
 
   return {
@@ -178,7 +135,7 @@ def get_sampling_idx(subset, shard, subsample, pretrained_model,
 @memory.cache
 def get_deeplab_embeddings(subset, shard, subsample, device, pretrained_model,
                            expected_feature_shape, feature_name, pred_name,
-                           uncert_name, use_euler, use_mapping=True):
+                           uncert_name, use_euler, use_mapping=True, num_classes=15):
   if use_euler:
     data = tfds.load(f'{subset}', split='validation', data_dir=f'{TMPDIR}/datasets')
   else:
@@ -196,19 +153,14 @@ def get_deeplab_embeddings(subset, shard, subsample, device, pretrained_model,
       use_mapping=use_mapping)['sampling_idx']
   model, hooks = get_deeplab(pretrained_model=pretrained_model,
                              feature_name=feature_name,
-                             device=device)
+                             device=device,
+                             num_classes=num_classes)
   all_features = []
   all_labels = []
   all_uncertainties = []
   all_entropies = []
   for idx, blob in tqdm(enumerate(data)):
-    if use_mapping:
-      frame = f'143_entropy.npy_{idx:06d}'
-    else:
-      frame = f'{idx}'
-    if use_mapping and frame not in sampling_idx:
-      print(f'frame {frame} is not in sampling index, skipping')
-      continue
+    frame = f'{idx}'
     image = convert_img_to_float(blob['image'])
     # move channel from last to 2nd
     image = tf.transpose(image, perm=[2, 0, 1])[tf.newaxis]
@@ -277,23 +229,85 @@ def get_deeplab_embeddings(subset, shard, subsample, device, pretrained_model,
       'entropy': out_entropy,
   }
 
-
 @memory.cache
-def get_imagenet_embeddings(subset,
-                            shard,
-                            subsample,
-                            device,
-                            pretrained_model,
-                            expected_feature_shape,
-                            feature_name,
-                            interpolate=False):
-  raise NotImplementedError("get imagenet embeddings not implementetd for oaisys")
+def get_deeplab_embeddings_features_labels(subset, shard, subsample, device, pretrained_model,
+                           expected_feature_shape, feature_name, use_euler, use_mapping=True, split='validation'):
+  if use_euler:
+    data = tfds.load(f'{subset}', split=split, data_dir=f'{TMPDIR}/datasets')
+  else:
+    data = tfds.load(f'{subset}', split=split)
+  sampling_idx = {}
+  sampling_idx = get_sampling_idx(
+      subset=subset,
+      shard=shard,
+      subsample=subsample,
+      expected_feature_shape=expected_feature_shape,
+      pretrained_model=pretrained_model,
+      use_euler=use_euler,
+      use_mapping=use_mapping,
+      split=split)['sampling_idx']
+  model, hooks = get_deeplab(pretrained_model=pretrained_model,
+                             feature_name=feature_name,
+                             device=device)
+  all_features = []
+  all_labels = []
+  for idx, blob in tqdm(enumerate(data)):
+    if use_mapping:
+      frame = f'143_entropy.npy_{idx:06d}'
+    else:
+      frame = f'{idx}'
+    if use_mapping and frame not in sampling_idx:
+      print(f'frame {frame} is not in sampling index, skipping')
+      continue
+    image, label = data_converter_rugd(blob['image'], blob['label'])
+    image = torch.from_numpy(image[tf.newaxis].numpy()).to(device)
+    
+    # run inference
+    logits = model(image)['out']
+    features = hooks['feat']
+    features = features.to('cpu').detach().numpy().transpose([0, 2, 3, 1])
+    assert features.shape[-1] == 256
+    assert features.shape[1] == expected_feature_shape[0]
+    assert features.shape[2] == expected_feature_shape[1]
+
+    label = cv2.resize(label.numpy().squeeze(),
+                       dsize=(features.shape[2], features.shape[1]),
+                       interpolation=cv2.INTER_NEAREST)
+    feature_shape = features.shape[1:3]
+    assert label.shape[0] == feature_shape[0]
+    assert label.shape[1] == feature_shape[1]
+    label = label.flatten()
+
+    features = features.reshape((-1, 256))
+    samples = sampling_idx[frame]
+    all_features.append(features[samples])
+    all_labels.append(label[samples])
+    del logits, image, features
+
+  out_features = np.array([[]])
+  out_labels = np.array([[]])
+  if all_features:
+    out_features = np.concatenate(all_features, axis=0)
+  else:
+    print("No features found, returning empty array")
+  if all_labels:
+    out_labels = np.concatenate(all_labels, axis=0)
+  else:
+    print("No labels found, returning empty array")
+
+  return {
+      'features': out_features,
+      'labels': out_labels,
+  }
 
 
 @memory.cache
 def get_dino_embeddings(subset, shard, subsample, device, pretrained_model,
-                        expected_feature_shape):
-  data = tfds.load(f'{subset}', split='validation')
+                        expected_feature_shape, use_euler):
+  if use_euler:
+    data = tfds.load(f'{subset}', split='validation', data_dir=f'{TMPDIR}/datasets')
+  else:
+    data = tfds.load(f'{subset}', split='validation')
   _, pretrained_id = get_checkpoint(pretrained_model)
   directory = os.path.join(EXP_OUT, 'oaisys_inference', subset, pretrained_id)
   sampling_idx = get_sampling_idx(
@@ -301,13 +315,16 @@ def get_dino_embeddings(subset, shard, subsample, device, pretrained_model,
       shard=shard,
       subsample=subsample,
       expected_feature_shape=expected_feature_shape,
-      pretrained_model=pretrained_model, use_euler=False)['sampling_idx']
+      pretrained_model=pretrained_model,
+      use_euler=use_euler,
+      use_mapping=False)['sampling_idx']
   model = get_dino(device=device)
 
   all_features = []
-  for blob in tqdm(data):
-    frame = blob['name'].numpy().decode()
+  for idx, blob in tqdm(enumerate(data)):
+    frame = f'{idx}'
     if frame not in sampling_idx:
+      print(f'frame {frame} is not in sampling index, skipping')
       continue
     image = convert_img_to_float(blob['image'])
     # move channel from last to 2nd
@@ -324,7 +341,7 @@ def get_dino_embeddings(subset, shard, subsample, device, pretrained_model,
     features = torchvision.transforms.functional.resize(
         features,
         size=expected_feature_shape,
-        interpolation=torchvision.transforms.InterpolationMode.NEAREST)
+        interpolation=PIL.Image.NEAREST)
     features = features.to('cpu').detach().numpy().transpose([1, 2, 0])
     try:
       assert features.shape[0] == expected_feature_shape[0]
@@ -344,26 +361,3 @@ def get_dino_embeddings(subset, shard, subsample, device, pretrained_model,
       'dino_features': np.concatenate(all_features, axis=0),
   }
 
-
-def get_geometric_features(subset, shard, subsample, expected_feature_shape,
-                           pretrained_model):
-  _, pretrained_id = get_checkpoint(pretrained_model)
-  directory = os.path.join(EXP_OUT, 'oaisys_inference', subset, pretrained_id)
-  voxels = get_sampling_idx(subset=subset,
-                            shard=shard,
-                            subsample=subsample,
-                            expected_feature_shape=expected_feature_shape,
-                            pretrained_model=pretrained_model, use_euler=False)['voxels']
-  with open(os.path.join(directory, 'blockid_to_descriptor.pkl'), 'rb') as f:
-    blockid_to_descriptor = pickle.load(f)
-  geometric_features = []
-  for v in voxels:
-    if v in blockid_to_descriptor:
-      geometric_features.append(blockid_to_descriptor[v])
-    else:
-      geometric_features.append(np.array([np.nan for _ in range(32)]))
-  geometric_features = np.stack(geometric_features, axis=0)
-  assert geometric_features.shape[0] == voxels.shape[0]
-  return {
-      'geometric_features': geometric_features,
-  }

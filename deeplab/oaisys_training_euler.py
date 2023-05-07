@@ -3,6 +3,7 @@ import torch
 import torchvision
 import tensorflow_datasets as tfds
 import tensorflow as tf
+import numpy as np
 
 tf.config.set_visible_devices([], 'GPU')
 import os
@@ -20,7 +21,7 @@ from semsegcluster.data.augmentation import augmentation
 from semsegcluster.data.images import convert_img_to_float
 from semsegcluster.lr_scheduler import LRScheduler
 from semsegcluster.segmentation_metrics import SegmentationMetric
-from semsegcluster.settings import TMPDIR
+from semsegcluster.settings import TMPDIR, EXP_OUT
 from semsegcluster.sacred_utils import get_observer
 
 ex = Experiment()
@@ -58,10 +59,13 @@ ex.add_config(
     batchsize=10,
     epochs=100,
     lr=0.0001,
-    dataset='oaisys11k_rugd',
+    dataset='oaisys16k_rugd',
     device='cuda',
     aux_loss=False,
-    separate_eval=False
+    separate_eval=False,
+    num_classes=11,
+    training_set='oaisys16k_rugd',
+    weighted_loss=True,
 )
 
 def data_converter_rugd(image, label):
@@ -101,15 +105,7 @@ def data_converter_rugd(image, label):
 
 
 @ex.main
-def deeplab_oaisys(_run, batchsize, epochs, lr, dataset, aux_loss, device, separate_eval):
-  # Issues with number of open files while loading coco_segmentation dataset
-  # Set RLIMIT_NOFILE higher to unpack and hsuffle dataset
-  # https://github.com/tensorflow/datasets/issues/1441
-  # import resource
-  # low, high = resource.getrlimit(resource.RLIMIT_NOFILE)
-  # resource.setrlimit(resource.RLIMIT_NOFILE, (high/2, high))
-  # low, high = resource.getrlimit(resource.RLIMIT_NOFILE)
-
+def deeplab_oaisys(_run, batchsize, epochs, lr, dataset, aux_loss, device, separate_eval, num_classes, training_set, weighted_loss):
   os.system(f'mkdir {TMPDIR}/datasets')
   os.system(f'tar -C {TMPDIR}/datasets -xvf /cluster/project/cvg/students/loewsi/datasets/{dataset}.tar')
   if separate_eval:
@@ -128,23 +124,11 @@ def deeplab_oaisys(_run, batchsize, epochs, lr, dataset, aux_loss, device, separ
                       split='validation',
                       as_supervised=True,
                       data_dir=f'{TMPDIR}/datasets')
-  if separate_eval:
-    rugd_valdata = tfds.load('rugd',
-                        split='validation',
-                        as_supervised=True,
-                        data_dir=f'{TMPDIR}/datasets')
-    oaisys_valdata = tfds.load('oaisys11k',
-                        split='validation',
-                        as_supervised=True,
-                        data_dir=f'{TMPDIR}/datasets')
-
 
   traindata = TFDataIterableDataset(
       traindata.map(lambda x, y: augmentation(
           x, y, random_crop=(256, 256))).map(data_converter_rugd))
   valdata = TFDataIterableDataset(valdata.map(data_converter_rugd))
-  rugd_valdata = TFDataIterableDataset(rugd_valdata.map(data_converter_rugd))
-  oaisys_valdata = TFDataIterableDataset(oaisys_valdata.map(data_converter_rugd))
   train_loader = torch.utils.data.DataLoader(dataset=traindata,
                                              batch_size=batchsize,
                                              pin_memory=True,
@@ -154,6 +138,16 @@ def deeplab_oaisys(_run, batchsize, epochs, lr, dataset, aux_loss, device, separ
                                            pin_memory=True,
                                            drop_last=True)
   if separate_eval:
+    rugd_valdata = tfds.load('rugd',
+                        split='validation',
+                        as_supervised=True,
+                        data_dir=f'{TMPDIR}/datasets')
+    oaisys_valdata = tfds.load('oaisys11k',
+                        split='validation',
+                        as_supervised=True,
+                        data_dir=f'{TMPDIR}/datasets')
+    rugd_valdata = TFDataIterableDataset(rugd_valdata.map(data_converter_rugd))
+    oaisys_valdata = TFDataIterableDataset(oaisys_valdata.map(data_converter_rugd))
     rugd_val_loader = torch.utils.data.DataLoader(dataset=rugd_valdata,
                                            batch_size=1,
                                            pin_memory=True,
@@ -168,21 +162,33 @@ def deeplab_oaisys(_run, batchsize, epochs, lr, dataset, aux_loss, device, separ
       pretrained=False,
       pretrained_backbone=True,
       progress=True,
-      num_classes=15,
+      num_classes=num_classes,
       aux_loss=aux_loss)
   model.to(device)
   if torch.cuda.device_count() > 1:
     model = torch.nn.DataParallel(
         model, device_ids=[*range(torch.cuda.device_count())])
 
-  criterion = torch.nn.CrossEntropyLoss(ignore_index=255).to(device)
+  if weighted_loss and training_set is not None:
+    training_directory = os.path.join(EXP_OUT, 'oaisys_inference', f'{training_set}', 'deeplab')
+    num_labels = np.load(os.path.join(training_directory, 'num_labels.npy'))
+    weights = torch.zeros(num_classes)
+    for i in range(0, num_classes):
+      if num_labels[i] != 0:
+        weights[i] = 1 / num_labels[i]
+    weights *= np.min(num_labels)
+
+  if weighted_loss:
+    criterion = torch.nn.CrossEntropyLoss(ignore_index=255, weight=weights).to(device)
+  else:
+    criterion = torch.nn.CrossEntropyLoss(ignore_index=255).to(device)
   optimizer = torch.optim.Adam(model.parameters(), lr=lr)
   lr_scheduler = LRScheduler(mode='poly',
                              base_lr=lr,
                              nepochs=epochs,
                              iters_per_epoch=len(train_loader),
                              power=.9)
-  metric = SegmentationMetric(15)
+  metric = SegmentationMetric(num_classes)
 
   wandb.config.update(
     {
@@ -222,10 +228,6 @@ def deeplab_oaisys(_run, batchsize, epochs, lr, dataset, aux_loss, device, separ
       'miou_bed_rock': IoU[8],
       'miou_log': IoU[9],
       'miou_rock': IoU[10],
-      'miou_empty': IoU[11],
-      'miou_empty': IoU[12],
-      'miou_empty': IoU[13],
-      'miou_empty': IoU[14],
       'epoch': epoch,
     })
 
@@ -258,10 +260,6 @@ def deeplab_oaisys(_run, batchsize, epochs, lr, dataset, aux_loss, device, separ
         'rugd_miou_bed_rock': IoU[8],
         'rugd_miou_log': IoU[9],
         'rugd_miou_rock': IoU[10],
-        'rugd_miou_empty': IoU[11],
-        'rugd_miou_empty': IoU[12],
-        'rugd_miou_empty': IoU[13],
-        'rugd_miou_empty': IoU[14],
         'epoch': epoch,
       })
       metric.reset()
@@ -286,10 +284,6 @@ def deeplab_oaisys(_run, batchsize, epochs, lr, dataset, aux_loss, device, separ
         'oaisys_miou_bed_rock': IoU[8],
         'oaisys_miou_log': IoU[9],
         'oaisys_miou_rock': IoU[10],
-        'oaisys_miou_empty': IoU[11],
-        'oaisys_miou_empty': IoU[12],
-        'oaisys_miou_empty': IoU[13],
-        'oaisys_miou_empty': IoU[14],
         'epoch': epoch,
       })
 
@@ -328,7 +322,7 @@ def deeplab_oaisys(_run, batchsize, epochs, lr, dataset, aux_loss, device, separ
       wandb.log({'batch': cur_iters, 'epoch': epoch, 'loss': loss.item(), 'lr': current_lr})
     with torch.no_grad():
       validation(epoch, best_pred)
-    if epoch % 5 == 0:
+    if epoch % 2 == 0:
       save_checkpoint(model, postfix=f'{epoch:05d}epochs')
       _run.add_artifact(os.path.join(TMPDIR, f'deeplab_oaisys_1000_test_{epoch:05d}epochs.pth'))
 
