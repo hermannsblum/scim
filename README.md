@@ -100,6 +100,12 @@ python3 deeplab/oaisys_inference.py with pretrained_model=$MODEL set=$DATASET tr
 
 <details>
   <summary>GMM Post processing</summary>
+Clone an adapted gmm pytorch implementation
+
+```bash
+git clone https://github.com/loewsi/gmm-torch.git
+```
+
 Before step 1, run the following 2 steps:
 
 0.1. fit gmm model
